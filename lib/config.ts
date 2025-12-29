@@ -7,13 +7,17 @@ function normalizeBaseUrl(raw: string | undefined) {
 }
 
 const baseUrl = normalizeBaseUrl(process.env.CLIPROXY_API_BASE_URL);
+const password = process.env.PASSWORD || process.env.CLIPROXY_SECRET_KEY || "";
+const exposeSyncEndpoint = ["true", "1"].includes((process.env.EXPOSE_SYNC_ENDPOINT || "").toLowerCase());
 
 export const config = {
   cliproxy: {
     baseUrl,
     apiKey: process.env.CLIPROXY_SECRET_KEY || ""
   },
-  postgresUrl: process.env.DATABASE_URL || ""
+  postgresUrl: process.env.DATABASE_URL || "",
+  password,
+  exposeSyncEndpoint
 };
 
 export function assertEnv() {

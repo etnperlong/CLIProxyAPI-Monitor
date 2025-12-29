@@ -7,6 +7,10 @@ import { parseUsagePayload, toUsageRecords } from "@/lib/usage";
 export const runtime = "nodejs";
 
 export async function POST() {
+  if (!config.exposeSyncEndpoint) {
+    return NextResponse.json({ error: "sync endpoint disabled" }, { status: 404 });
+  }
+
   try {
     assertEnv();
   } catch (error) {
