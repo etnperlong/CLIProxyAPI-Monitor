@@ -58,7 +58,7 @@ function normalizePage(value?: number | null) {
 function normalizePageSize(value?: number | null) {
   const fallback = 10;
   if (value == null || Number.isNaN(value)) return fallback;
-  return Math.min(Math.max(Math.floor(value), 5), 50);
+  return Math.min(Math.max(Math.floor(value), 5), 500);
 }
 
 export async function getOverview(

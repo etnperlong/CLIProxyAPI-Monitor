@@ -105,8 +105,70 @@ export default function DashboardPage() {
   const [editForm, setEditForm] = useState<PriceForm>({ model: "", inputPricePer1M: "", cachedInputPricePer1M: "", outputPricePer1M: "" });
   const [fullscreenChart, setFullscreenChart] = useState<"trend" | "pie" | "stacked" | null>(null);
   const [hoveredPieIndex, setHoveredPieIndex] = useState<number | null>(null);
+  const [pieTooltipOpen, setPieTooltipOpen] = useState(false);
+  const pieChartContainerRef = useRef<HTMLDivElement | null>(null);
+  const pieChartFullscreenContainerRef = useRef<HTMLDivElement | null>(null);
+  const pieLegendClearTimerRef = useRef<number | null>(null);
   const syncingRef = useRef(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+
+  const cancelPieLegendClear = useCallback(() => {
+    if (pieLegendClearTimerRef.current !== null) {
+      window.clearTimeout(pieLegendClearTimerRef.current);
+      pieLegendClearTimerRef.current = null;
+    }
+  }, []);
+
+  const schedulePieLegendClear = useCallback(() => {
+    cancelPieLegendClear();
+    pieLegendClearTimerRef.current = window.setTimeout(() => {
+      setHoveredPieIndex(null);
+      pieLegendClearTimerRef.current = null;
+    }, 120);
+  }, [cancelPieLegendClear]);
+
+  useEffect(() => {
+    if (!pieTooltipOpen) return;
+
+    const isInsideRect = (rect: DOMRect | undefined | null, x: number, y: number) => {
+      if (!rect) return false;
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    };
+
+    const closeTooltip = () => {
+      cancelPieLegendClear();
+      setPieTooltipOpen(false);
+      setHoveredPieIndex(null);
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      const x = e.clientX;
+      const y = e.clientY;
+      const mainRect = pieChartContainerRef.current?.getBoundingClientRect();
+      const fsRect = pieChartFullscreenContainerRef.current?.getBoundingClientRect();
+      const inside = isInsideRect(mainRect, x, y) || isInsideRect(fsRect, x, y);
+      if (!inside) closeTooltip();
+    };
+
+    const onWindowBlur = () => closeTooltip();
+
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    window.addEventListener("blur", onWindowBlur);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("blur", onWindowBlur);
+    };
+  }, [pieTooltipOpen, cancelPieLegendClear]);
+
+  const applyTheme = useCallback((nextDark: boolean) => {
+    setDarkMode(nextDark);
+    if (typeof document !== "undefined") {
+      document.documentElement.classList.toggle("dark", nextDark);
+    }
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("theme", nextDark ? "dark" : "light");
+    }
+  }, []);
 
   // 执行数据同步
   const doSync = useCallback(async (showMessage = true, triggerRefresh = true) => {
@@ -144,6 +206,13 @@ export default function DashboardPage() {
   }, [doSync]);
 
   useEffect(() => {
+    const saved = typeof window !== "undefined" ? window.localStorage.getItem("theme") : null;
+    const prefersDark = typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)").matches : true;
+    const initial = saved ? saved === "dark" : prefersDark;
+    applyTheme(initial);
+  }, [applyTheme]);
+
+  useEffect(() => {
     const load = async () => {
       try {
         const res = await fetch("/api/prices", { cache: "no-store" });
@@ -167,6 +236,9 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!ready) return;
 
+    const controller = new AbortController();
+    let active = true;
+
     const loadOverview = async () => {
       setLoadingOverview(true);
       try {
@@ -177,14 +249,17 @@ export default function DashboardPage() {
         params.set("page", String(page));
         params.set("pageSize", "500");
 
-        const res = await fetch(`/api/overview?${params.toString()}`, { cache: "no-store" });
+        const res = await fetch(`/api/overview?${params.toString()}`, { cache: "no-store", signal: controller.signal });
 
         if (!res.ok) {
-          setOverviewError("无法加载实时用量：" + res.statusText);
-          setOverview(null);
+          if (active) {
+            setOverviewError("无法加载实时用量：" + res.statusText);
+            setOverview(null);
+          }
           return;
         }
         const data: OverviewAPIResponse = await res.json();
+        if (!active) return;
         setOverview(data.overview ?? null);
         setOverviewEmpty(Boolean(data.empty));
         setOverviewError(null);
@@ -192,13 +267,20 @@ export default function DashboardPage() {
         setModelOptions(Array.from(new Set(data.filters?.models ?? [])));
         setRouteOptions(Array.from(new Set(data.filters?.routes ?? [])));
       } catch (err) {
-        setOverviewError("无法加载实时用量：" + (err as Error).message);
+        if (!active) return;
+        const error = err as Error;
+        if ((error as any)?.name === "AbortError") return;
+        setOverviewError("无法加载实时用量：" + error.message);
         setOverview(null);
       } finally {
-        setLoadingOverview(false);
+        if (active) setLoadingOverview(false);
       }
     };
     loadOverview();
+    return () => {
+      active = false;
+      controller.abort();
+    };
   }, [rangeDays, filterModel, filterRoute, page, refreshTrigger, ready]);
 
   const overviewData = overview;
@@ -373,7 +455,7 @@ export default function DashboardPage() {
         </div>
         <div className="flex items-center gap-4">
           <button
-            onClick={() => setDarkMode((d) => !d)}
+            onClick={() => applyTheme(!darkMode)}
             className={`rounded-lg border p-2 transition ${
               darkMode
                 ? "border-slate-700 bg-slate-800 text-slate-300 hover:border-slate-500"
@@ -388,7 +470,9 @@ export default function DashboardPage() {
             disabled={syncing}
             className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
               syncing
-                ? "cursor-not-allowed border-slate-700 bg-slate-800 text-slate-500"
+                ? darkMode
+                  ? "cursor-not-allowed border-slate-700 bg-slate-800 text-slate-500"
+                  : "cursor-not-allowed border-slate-300 bg-slate-200 text-slate-500"
                 : "border-indigo-500/50 bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600/30"
             }`}
           >
@@ -575,7 +659,7 @@ export default function DashboardPage() {
       </section>
 
       <section className="mt-8 grid gap-6 lg:grid-cols-5">
-        <div className={`rounded-2xl p-6 shadow-sm ring-1 lg:col-span-3 ${darkMode ? "bg-slate-800/50 ring-slate-700" : "bg-white ring-slate-200"}`}>
+        <div className={`rounded-2xl p-6 shadow-sm ring-1 lg:col-span-3 flex flex-col ${darkMode ? "bg-slate-800/50 ring-slate-700" : "bg-white ring-slate-200"}`}>
           <div className="flex items-center justify-between">
             <h2 className={`text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>每日用量趋势</h2>
             <div className="flex items-center gap-2">
@@ -590,7 +674,7 @@ export default function DashboardPage() {
               </button>
             </div>
           </div>
-          <div className="mt-4 h-64">
+          <div className="mt-4 flex-1 min-h-64">
             {loadingOverview ? (
               <Skeleton className="h-full rounded-xl" />
             ) : showEmpty || !overviewData ? (
@@ -620,10 +704,10 @@ export default function DashboardPage() {
                     hide
                   />
                   <Tooltip 
-                    contentStyle={{ borderRadius: 12, backgroundColor: "#1e293b", border: "1px solid #334155", color: "#f1f5f9" }}
+                    contentStyle={{ borderRadius: 12, backgroundColor: "rgba(0,0,0,0.8)", border: "1px solid rgba(100,116,139,0.6)", color: "#f8fafc" }}
                     formatter={(value: number, name: string) => name === "费用" ? [formatCurrency(value), name] : [formatNumberWithCommas(value), name]}
                   />
-                  <Legend />
+                  <Legend height={24} iconSize={10} wrapperStyle={{ paddingTop: 0, paddingBottom: 0, lineHeight: "24px" }} />
                   <Line yAxisId="left" type="monotone" dataKey="requests" stroke="#3b82f6" strokeWidth={2} name="请求数" dot={{ r: 3 }} />
                   <Line yAxisId="right" type="monotone" dataKey="tokens" stroke="#10b981" strokeWidth={2} name="Tokens" dot={{ r: 3 }} />
                   <Line yAxisId="cost" type="monotone" dataKey="cost" stroke="#fbbf24" strokeWidth={2} name="费用" dot={{ r: 3 }} />
@@ -672,7 +756,15 @@ export default function DashboardPage() {
             ) : (
               <>
                 {/* 饼图 */}
-                <div className="flex-shrink-0 w-64">
+                <div
+                  ref={pieChartContainerRef}
+                  className="flex-shrink-0 w-64"
+                  onPointerLeave={() => {
+                    cancelPieLegendClear();
+                    setPieTooltipOpen(false);
+                    setHoveredPieIndex(null);
+                  }}
+                >
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
                       <Pie
@@ -684,8 +776,14 @@ export default function DashboardPage() {
                         outerRadius="85%"
                         innerRadius="45%"
                         animationDuration={300}
-                        onMouseEnter={(_, index) => setHoveredPieIndex(index)}
-                        onMouseLeave={() => setHoveredPieIndex(null)}
+                        onMouseEnter={(_, index) => {
+                          setHoveredPieIndex(index);
+                          setPieTooltipOpen(true);
+                        }}
+                        onMouseLeave={() => {
+                          setHoveredPieIndex(null);
+                          setPieTooltipOpen(false);
+                        }}
                       >
                         {overviewData.models.map((_, index) => (
                           <Cell 
@@ -698,15 +796,19 @@ export default function DashboardPage() {
                       </Pie>
                       <Tooltip
                         position={{ x: 0, y: 0 }}
-                        wrapperStyle={{ zIndex: 1000 }}
+                        wrapperStyle={{ zIndex: 1000, pointerEvents: "none" }}
                         content={({ active, payload }) => {
+                          if (!pieTooltipOpen || hoveredPieIndex === null) return null;
                           if (!active || !payload || !payload[0]) return null;
                           const data = payload[0].payload;
                           return (
-                            <div className={`rounded-xl border px-3 py-2 text-sm shadow-lg ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
-                              <p className={`font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>{data.model}</p>
-                              <p className={darkMode ? "text-slate-300" : "text-slate-600"}>{formatNumberWithCommas(data.tokens)} tokens</p>
-                              <p className={darkMode ? "text-slate-300" : "text-slate-600"}>{formatNumberWithCommas(data.requests)} 请求数</p>
+                            <div
+                              className="rounded-xl px-3 py-2 text-sm shadow-lg"
+                              style={{ backgroundColor: "rgba(0,0,0,0.8)", border: "1px solid rgba(100,116,139,0.6)", color: "#f8fafc" }}
+                            >
+                              <p className="font-semibold text-slate-50">{data.model}</p>
+                              <p className="text-blue-300">{formatNumberWithCommas(data.requests)} 请求数</p>
+                              <p className="text-emerald-300">{formatNumberWithCommas(data.tokens)} tokens</p>
                             </div>
                           );
                         }}
@@ -731,8 +833,13 @@ export default function DashboardPage() {
                               ? darkMode ? "bg-slate-700/30" : "bg-slate-100" 
                               : "opacity-40"
                           } ${darkMode ? "hover:bg-slate-700/50" : "hover:bg-slate-200"}`}
-                          onMouseEnter={() => setHoveredPieIndex(originalIndex)}
-                          onMouseLeave={() => setHoveredPieIndex(null)}
+                          onMouseEnter={() => {
+                            cancelPieLegendClear();
+                            setHoveredPieIndex(originalIndex);
+                          }}
+                          onMouseLeave={() => {
+                            schedulePieLegendClear();
+                          }}
                           style={{ transition: 'all 0.2s' }}
                         >
                           <div className="flex items-center gap-2 mb-1">
@@ -819,7 +926,7 @@ export default function DashboardPage() {
                   <YAxis yAxisId="left" stroke="#3b82f6" tickFormatter={(v) => formatCompactNumber(v)} fontSize={12} />
                   <YAxis yAxisId="right" orientation="right" stroke={darkMode ? "#94a3b8" : "#64748b"} tickFormatter={(v) => formatCompactNumber(v)} fontSize={12} />
                   <Tooltip 
-                    contentStyle={{ borderRadius: 12, backgroundColor: darkMode ? "#1e293b" : "#fff", border: darkMode ? "1px solid #334155" : "1px solid #e2e8f0", color: darkMode ? "#f1f5f9" : "#1e293b" }} 
+                    contentStyle={{ borderRadius: 12, backgroundColor: "rgba(0,0,0,0.8)", border: "1px solid rgba(100,116,139,0.6)", color: "#f8fafc" }} 
                     formatter={(value: number, name: string) => [formatNumberWithCommas(value), name]}
                     labelFormatter={(label) => formatHourLabel(label)}
                   />
@@ -1134,10 +1241,10 @@ export default function DashboardPage() {
                     <YAxis yAxisId="right" orientation="right" stroke="#10b981" tickFormatter={(v) => formatCompactNumber(v)} fontSize={12} />
                     <YAxis yAxisId="cost" orientation="right" stroke="#fbbf24" tickFormatter={(v) => formatCurrency(v)} fontSize={12} />
                     <Tooltip
-                      contentStyle={{ borderRadius: 12, backgroundColor: "#1e293b", border: "1px solid #334155", color: "#f1f5f9" }}
+                      contentStyle={{ borderRadius: 12, backgroundColor: "rgba(0,0,0,0.8)", border: "1px solid rgba(100,116,139,0.6)", color: "#f8fafc" }}
                       formatter={(value: number, name: string) => name === "费用" ? [formatCurrency(value), name] : [formatNumberWithCommas(value), name]}
                     />
-                    <Legend />
+                    <Legend height={24} iconSize={10} wrapperStyle={{ paddingTop: 0, paddingBottom: 0, lineHeight: "24px" }} />
                     <Line yAxisId="left" type="monotone" dataKey="requests" stroke="#3b82f6" strokeWidth={2} name="请求数" dot={{ r: 3 }} />
                     <Line yAxisId="right" type="monotone" dataKey="tokens" stroke="#10b981" strokeWidth={2} name="Tokens" dot={{ r: 3 }} />
                     <Line yAxisId="cost" type="monotone" dataKey="cost" stroke="#fbbf24" strokeWidth={2} name="费用" dot={{ r: 3 }} />
@@ -1147,7 +1254,15 @@ export default function DashboardPage() {
               {fullscreenChart === "pie" && overviewData && overviewData.models.length > 0 && (
                 <div className="flex gap-6 h-full">
                   {/* 饼图 */}
-                  <div className="flex-1">
+                  <div
+                    ref={pieChartFullscreenContainerRef}
+                    className="flex-1"
+                    onPointerLeave={() => {
+                      cancelPieLegendClear();
+                      setPieTooltipOpen(false);
+                      setHoveredPieIndex(null);
+                    }}
+                  >
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
                         <Pie
@@ -1159,8 +1274,14 @@ export default function DashboardPage() {
                           outerRadius="75%"
                           innerRadius="40%"
                           animationDuration={300}
-                          onMouseEnter={(_, index) => setHoveredPieIndex(index)}
-                          onMouseLeave={() => setHoveredPieIndex(null)}
+                          onMouseEnter={(_, index) => {
+                            setHoveredPieIndex(index);
+                            setPieTooltipOpen(true);
+                          }}
+                          onMouseLeave={() => {
+                            setHoveredPieIndex(null);
+                            setPieTooltipOpen(false);
+                          }}
                         >
                           {overviewData.models.map((_, index) => (
                             <Cell 
@@ -1173,15 +1294,19 @@ export default function DashboardPage() {
                         </Pie>
                         <Tooltip 
                           position={{ x: 0, y: 0 }}
-                          wrapperStyle={{ zIndex: 1000 }}
+                          wrapperStyle={{ zIndex: 1000, pointerEvents: "none" }}
                           content={({ active, payload }) => {
+                            if (!pieTooltipOpen || hoveredPieIndex === null) return null;
                             if (!active || !payload || !payload[0]) return null;
                             const data = payload[0].payload;
                             return (
-                              <div className={`rounded-xl border px-3 py-2 text-sm shadow-lg ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
-                                <p className={`font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>{data.model}</p>
-                                <p className={darkMode ? "text-slate-300" : "text-slate-600"}>{formatNumberWithCommas(data.tokens)} tokens</p>
-                                <p className={darkMode ? "text-slate-300" : "text-slate-600"}>{formatNumberWithCommas(data.requests)} 请求数</p>
+                              <div
+                                className="rounded-xl px-3 py-2 text-sm shadow-lg"
+                                style={{ backgroundColor: "rgba(0,0,0,0.8)", border: "1px solid rgba(100,116,139,0.6)", color: "#f8fafc" }}
+                              >
+                                <p className="font-semibold text-slate-50">{data.model}</p>
+                                <p className="text-blue-300">{formatNumberWithCommas(data.requests)} 请求数</p>
+                                <p className="text-emerald-300">{formatNumberWithCommas(data.tokens)} tokens</p>
                               </div>
                             );
                           }}
@@ -1206,8 +1331,13 @@ export default function DashboardPage() {
                                 ? darkMode ? "bg-slate-700/30" : "bg-slate-100" 
                                 : "opacity-40"
                             } ${darkMode ? "hover:bg-slate-700/50" : "hover:bg-slate-200"}`}
-                            onMouseEnter={() => setHoveredPieIndex(originalIndex)}
-                            onMouseLeave={() => setHoveredPieIndex(null)}
+                            onMouseEnter={() => {
+                              cancelPieLegendClear();
+                              setHoveredPieIndex(originalIndex);
+                            }}
+                            onMouseLeave={() => {
+                              schedulePieLegendClear();
+                            }}
                             style={{ transition: 'all 0.2s' }}
                           >
                             <div className="flex items-center gap-2 mb-1.5">
@@ -1244,7 +1374,7 @@ export default function DashboardPage() {
                     <YAxis yAxisId="left" stroke="#3b82f6" tickFormatter={(v) => formatCompactNumber(v)} fontSize={12} />
                     <YAxis yAxisId="right" orientation="right" stroke={darkMode ? "#94a3b8" : "#64748b"} tickFormatter={(v) => formatCompactNumber(v)} fontSize={12} />
                     <Tooltip 
-                      contentStyle={{ borderRadius: 12, backgroundColor: darkMode ? "#1e293b" : "#fff", border: darkMode ? "1px solid #334155" : "1px solid #e2e8f0", color: darkMode ? "#f1f5f9" : "#1e293b" }} 
+                      contentStyle={{ borderRadius: 12, backgroundColor: "rgba(0,0,0,0.8)", border: "1px solid rgba(100,116,139,0.6)", color: "#f8fafc" }} 
                       formatter={(value: number, name: string) => [formatNumberWithCommas(value), name]}
                       labelFormatter={(label) => formatHourLabel(label)}
                     />
