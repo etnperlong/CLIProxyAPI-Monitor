@@ -1,7 +1,3 @@
-const nextConfig = {
-  experimental: {
-    serverActions: true
-  }
-};
+const nextConfig = {};
 
 export default nextConfig;
