@@ -101,7 +101,12 @@ export default function DashboardPage() {
   const [overviewError, setOverviewError] = useState<string | null>(null);
   const [overviewEmpty, setOverviewEmpty] = useState(false);
   const [loadingOverview, setLoadingOverview] = useState(true);
-  const [rangeDays, setRangeDays] = useState(14);
+  const [rangeDays, setRangeDays] = useState(() => {
+    if (typeof window === "undefined") return 14;
+    const saved = window.localStorage.getItem("rangeDays");
+    const parsed = saved ? Number.parseInt(saved, 10) : NaN;
+    return Number.isFinite(parsed) ? parsed : 14;
+  });
   const [hourRange, setHourRange] = useState<"all" | "12h" | "24h">("all");
   const [modelOptions, setModelOptions] = useState<string[]>([]);
   const [routeOptions, setRouteOptions] = useState<string[]>([]);
@@ -130,6 +135,11 @@ export default function DashboardPage() {
   const pieLegendClearTimerRef = useRef<number | null>(null);
   const syncingRef = useRef(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("rangeDays", String(rangeDays));
+  }, [rangeDays]);
 
   const [trendVisible, setTrendVisible] = useState<Record<string, boolean>>({
     requests: true,

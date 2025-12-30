@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { BarChart3, FileText, Activity, LogOut } from "lucide-react";
+import { BarChart3, FileText, Activity, LogOut, Github } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
 
 const links = [
   { href: "/", label: "仪表盘", icon: BarChart3 },
+  { href: "/explore", label: "数据探索", icon: Activity },
   { href: "/logs", label: "日志", icon: FileText }
 ];
 
@@ -101,7 +102,7 @@ export default function Sidebar() {
         })}
       </nav>
 
-      <div className="mt-auto border-t border-slate-800 px-4 pt-4 space-y-3">
+      <div className="mt-auto border-t border-slate-800 px-4 pt-4 pb-2 space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-sm text-slate-400">
             <Activity className="h-4 w-4" />
@@ -116,18 +117,28 @@ export default function Sidebar() {
                 : "border border-slate-600 text-slate-400"
             } ${usageStatsLoading ? "opacity-70" : ""}`}
           >
-            {usageStatsLoading ? "..." : usageStatsEnabled ? "开" : "关"}
+            {usageStatsLoading ? "..." : usageStatsEnabled ? "ON" : "OFF"}
           </button>
         </div>
         
-        <button
-          onClick={handleLogout}
-          disabled={loggingOut}
-          className="w-full flex items-center justify-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm font-medium text-slate-300 transition hover:bg-slate-800 hover:text-white disabled:opacity-50"
-        >
-          <LogOut className="h-4 w-4" />
-          {loggingOut ? "退出中..." : "退出登录"}
-        </button>
+        <div className="flex items-center gap-2">
+          <a
+            href="https://github.com/sxjeru/CLIProxyAPI-Monitor"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-center rounded-lg border border-slate-700 p-2 text-slate-500 transition hover:bg-slate-800 hover:text-slate-300"
+          >
+            <Github className="h-4 w-4" />
+          </a>
+          <button
+            onClick={handleLogout}
+            disabled={loggingOut}
+            className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm font-medium text-slate-300 transition hover:bg-slate-800 hover:text-white disabled:opacity-50"
+          >
+            <LogOut className="h-4 w-4" />
+            {loggingOut ? "退出中..." : "退出登录"}
+          </button>
+        </div>
       </div>
       {showUsageConfirm ? (
         <div
