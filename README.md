@@ -1,9 +1,9 @@
 # CLIProxyAPI 数据看板
 
-基于 Next.js App Router + Drizzle + Vercel Postgres 的数据看板，用于拉取上游 CLIProxyAPI 的使用数据，**持久化到数据库**，并进行数据可视化。
+基于 Next.js App Router + Drizzle + Postgres 的数据看板，用于拉取上游 CLIProxyAPI 使用数据，**持久化到数据库**，并进行数据可视化。
 
 ## 功能
-- `/api/sync` 拉取上游用量数据并去重入库（支持 GET/POST，需鉴权）
+- `/api/sync` 拉取上游用量数据并去重入库（支持 GET/POST，有鉴权）
 - 前端表单可配置模型单价
 - 前端图表：日粒度折线图、小时粒度柱状图、模型费用列表，支持时间范围、模型、Key 筛选
 - 访问密码保护
@@ -22,7 +22,7 @@
 
 3. 部署后，可通过以下方式自动同步上游使用数据：
 
-	- Vercel Cron（Pro 可设每小时，Hobby 每天同步一次）：调用 GET `/api/sync` 并携带 `Authorization`
+	- 默认启用 Vercel Cron（Pro 可设每小时，Hobby 每天同步一次）
 	- Cloudflare Worker / 其他定时器定期请求同步：可见 [cf-worker-sync.js](https://github.com/sxjeru/CLIProxyAPI-Monitor/blob/main/cf-worker-sync.js)
 
 ## 预览
@@ -30,10 +30,9 @@
 |   |   |
 | --- | --- |
 | <img width="2186" height="1114" alt="image" src="https://github.com/user-attachments/assets/939424fb-1caa-4e80-a9a8-921d1770eb9f" /> | <img width="2112" height="1117" alt="image" src="https://github.com/user-attachments/assets/e5338679-7808-4f37-9753-41b559a3cee6" /> |
-<img width="2518" height="1055" alt="image" src="https://github.com/user-attachments/assets/35d020f8-e398-44d1-b661-6f4b84cbaa20" />
+<img width="2133" height="1098" alt="image" src="https://github.com/user-attachments/assets/99858753-f80f-4cd6-9331-087af35b21b3" />
 
-
-## DEV
+## Local DEV
 1. 安装依赖：`pnpm install`
 2. 复制环境变量：`cp .env.example .env`
 3. 创建表结构：`pnpm run db:push`
