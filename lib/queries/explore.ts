@@ -1,4 +1,4 @@
-import { sql, and, gte, eq } from "drizzle-orm";
+import { sql, and, gte, lte, eq } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { usageRecords } from "@/lib/db/schema";
@@ -13,10 +13,30 @@ export type ExplorePoint = {
   model: string;
 };
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 function normalizeDays(days?: number | null) {
   const fallback = 14;
   if (days == null || Number.isNaN(days)) return fallback;
   return Math.min(Math.max(Math.floor(days), 1), 90);
+}
+
+function parseDateInput(value?: string | Date | null) {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
+function withDayStart(date: Date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function withDayEnd(date: Date) {
+  const d = new Date(date);
+  d.setHours(23, 59, 59, 999);
+  return d;
 }
 
 function normalizeMaxPoints(value?: number | null) {
@@ -25,12 +45,20 @@ function normalizeMaxPoints(value?: number | null) {
   return Math.min(Math.max(Math.floor(value), 1_000), 100_000);
 }
 
-export async function getExplorePoints(daysInput?: number, opts?: { maxPoints?: number | null }) {
-  const days = normalizeDays(daysInput);
+export async function getExplorePoints(daysInput?: number, opts?: { maxPoints?: number | null; start?: string | Date | null; end?: string | Date | null }) {
+  const startDate = parseDateInput(opts?.start);
+  const endDate = parseDateInput(opts?.end);
+  const hasCustomRange = startDate && endDate && endDate >= startDate;
+
+  const days = hasCustomRange
+    ? Math.max(1, Math.round((withDayEnd(endDate).getTime() - withDayStart(startDate).getTime()) / DAY_MS) + 1)
+    : normalizeDays(daysInput);
   const maxPoints = normalizeMaxPoints(opts?.maxPoints ?? null);
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const since = hasCustomRange ? withDayStart(startDate!) : new Date(Date.now() - days * DAY_MS);
+  const until = hasCustomRange ? withDayEnd(endDate!) : undefined;
 
   const whereParts: SQL[] = [gte(usageRecords.occurredAt, since), eq(usageRecords.totalRequests, 1)];
+  if (until) whereParts.push(lte(usageRecords.occurredAt, until));
   const where = and(...whereParts);
 
   const totalRows = await db

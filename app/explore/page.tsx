@@ -183,6 +183,13 @@ const timeFormatter = new Intl.DateTimeFormat("zh-CN", {
   hour12: false
 });
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function formatDateInputValue(date: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 function formatTs(ms: number) {
   const d = new Date(ms);
   if (!Number.isFinite(d.getTime())) return "";
@@ -368,12 +375,58 @@ export default function ExplorePage() {
     return () => observer.disconnect();
   }, []);
 
-  const [rangeDays, setRangeDays] = useState(() => {
-    if (typeof window === "undefined") return 14;
-    const saved = window.localStorage.getItem("rangeDays");
-    const parsed = saved ? Number.parseInt(saved, 10) : NaN;
-    return Number.isFinite(parsed) ? parsed : 14;
+  type RangeMode = "preset" | "custom";
+  type RangeSelection = { mode: RangeMode; days: number; start: string; end: string };
+
+  const [rangeInit] = useState(() => {
+    const now = new Date();
+    const defaultEnd = now;
+    const defaultStart = new Date(now.getTime() - 6 * DAY_MS);
+    const fallback: RangeSelection & { source: "global" | "local" } = {
+      mode: "preset",
+      days: 14,
+      start: formatDateInputValue(defaultStart),
+      end: formatDateInputValue(defaultEnd),
+      source: "global"
+    };
+
+    if (typeof window === "undefined") return fallback;
+
+    const parseSelection = (raw: string | null): RangeSelection | null => {
+      if (!raw) return null;
+      try {
+        const parsed = JSON.parse(raw) as Partial<RangeSelection>;
+        if (!parsed) return null;
+        const mode = parsed.mode === "custom" ? "custom" : "preset";
+        const days = Number.isFinite(parsed.days) ? Math.max(1, Number(parsed.days)) : fallback.days;
+        const start = parsed.start || fallback.start;
+        const end = parsed.end || fallback.end;
+        return { mode, days, start, end };
+      } catch (err) {
+        console.warn("Failed to parse range selection", err);
+        return null;
+      }
+    };
+
+    const globalSel = parseSelection(window.localStorage.getItem("rangeSelection"));
+    const localSel = parseSelection(window.localStorage.getItem("rangeSelectionExplore"));
+
+    if (globalSel) return { ...globalSel, source: "global" } as const;
+    if (localSel) return { ...localSel, source: "local" } as const;
+    return fallback;
   });
+
+  const [rangeMode, setRangeMode] = useState<RangeMode>(rangeInit.mode);
+  const [rangeDays, setRangeDays] = useState(rangeInit.days);
+  const [customStart, setCustomStart] = useState(rangeInit.start);
+  const [customEnd, setCustomEnd] = useState(rangeInit.end);
+  const [appliedDays, setAppliedDays] = useState(rangeInit.days);
+  const [customPickerOpen, setCustomPickerOpen] = useState(false);
+  const [customDraftStart, setCustomDraftStart] = useState(rangeInit.start);
+  const [customDraftEnd, setCustomDraftEnd] = useState(rangeInit.end);
+  const [customError, setCustomError] = useState<string | null>(null);
+  const [selectionSource, setSelectionSource] = useState<"global" | "local">(rangeInit.source);
+  const [globalSelection, setGlobalSelection] = useState<RangeSelection>({ mode: rangeInit.mode, days: rangeInit.days, start: rangeInit.start, end: rangeInit.end });
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -383,6 +436,40 @@ export default function ExplorePage() {
   const [showStackedArea, setShowStackedArea] = useState(true);
   
   const scatterTooltipRef = useRef<ScatterTooltipHandle>(null);
+
+  // 持久化本页自定义选择，不回写仪表盘
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (selectionSource !== "local") return;
+    const payload: RangeSelection = { mode: rangeMode, days: rangeDays, start: customStart, end: customEnd };
+    window.localStorage.setItem("rangeSelectionExplore", JSON.stringify(payload));
+  }, [selectionSource, rangeMode, rangeDays, customStart, customEnd]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem("rangeSelection");
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as Partial<RangeSelection>;
+      if (!parsed) return;
+      const next: RangeSelection = {
+        mode: parsed.mode === "custom" ? "custom" : "preset",
+        days: Number.isFinite(parsed.days) ? Math.max(1, Number(parsed.days)) : rangeDays,
+        start: parsed.start || customStart,
+        end: parsed.end || customEnd
+      };
+      setGlobalSelection(next);
+      if (selectionSource === "global") {
+        setRangeMode(next.mode);
+        setRangeDays(next.days);
+        setCustomStart(next.start);
+        setCustomEnd(next.end);
+        setAppliedDays(next.days);
+      }
+    } catch (err) {
+      console.warn("Failed to load global rangeSelection", err);
+    }
+  }, []);
 
 
   type ScatterTooltipHandle = {
@@ -1022,22 +1109,49 @@ export default function ExplorePage() {
 
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
-      if (e.key !== "rangeDays") return;
-      const parsed = e.newValue ? Number.parseInt(e.newValue, 10) : NaN;
-      if (Number.isFinite(parsed)) setRangeDays(parsed);
+      if (e.key !== "rangeSelection") return;
+      const raw = e.newValue;
+      if (!raw) return;
+      try {
+        const parsed = JSON.parse(raw) as Partial<RangeSelection>;
+        if (!parsed) return;
+        const next: RangeSelection = {
+          mode: parsed.mode === "custom" ? "custom" : "preset",
+          days: Number.isFinite(parsed.days) ? Math.max(1, Number(parsed.days)) : rangeDays,
+          start: parsed.start || customStart,
+          end: parsed.end || customEnd
+        };
+        setGlobalSelection(next);
+        if (selectionSource === "global") {
+          setRangeMode(next.mode);
+          setRangeDays(next.days);
+          setCustomStart(next.start);
+          setCustomEnd(next.end);
+          setAppliedDays(next.days);
+        }
+      } catch (err) {
+        console.warn("Failed to sync rangeSelection", err);
+      }
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, []);
+  }, [selectionSource, rangeDays, customStart, customEnd]);
 
   useEffect(() => {
+    if (rangeMode === "custom" && (!customStart || !customEnd)) return;
+
     let cancelled = false;
     const run = async () => {
       setLoading(true);
       setError(null);
       try {
         const params = new URLSearchParams();
-        params.set("days", String(rangeDays));
+        if (rangeMode === "custom") {
+          params.set("start", customStart);
+          params.set("end", customEnd);
+        } else {
+          params.set("days", String(rangeDays));
+        }
 
         const res = await fetch(`/api/explore?${params.toString()}`, { cache: "no-store" });
         const json: ExploreResponse = await res.json();
@@ -1046,7 +1160,10 @@ export default function ExplorePage() {
           throw new Error(json?.error || res.statusText);
         }
 
-        if (!cancelled) setData(json);
+        if (!cancelled) {
+          setData(json);
+          setAppliedDays(json.days ?? rangeDays);
+        }
       } catch (err) {
         if (!cancelled) {
           setError((err as Error).message || "加载失败");
@@ -1061,7 +1178,7 @@ export default function ExplorePage() {
     return () => {
       cancelled = true;
     };
-  }, [rangeDays]);
+  }, [rangeMode, customStart, customEnd, rangeDays]);
 
   const models = useMemo(() => {
     const set = new Set<string>();
@@ -1070,6 +1187,21 @@ export default function ExplorePage() {
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [points]);
+
+  const isUsingGlobalRange = selectionSource === "global";
+
+  const presetDateLabel = useMemo(() => {
+    const end = new Date();
+    const start = new Date(end.getTime() - Math.max(0, appliedDays - 1) * DAY_MS);
+    return `${formatDateInputValue(start)} ~ ${formatDateInputValue(end)}`;
+  }, [appliedDays]);
+
+  const rangeSubtitle = useMemo(() => {
+    if (rangeMode === "custom" && customStart && customEnd) {
+      return `${customStart} ~ ${customEnd}${isUsingGlobalRange ? "（跟随仪表盘）" : ""}`;
+    }
+    return `${presetDateLabel}${isUsingGlobalRange ? "（跟随仪表盘）" : ""}`;
+  }, [rangeMode, customStart, customEnd, isUsingGlobalRange, presetDateLabel]);
 
   // 计算堆叠面积图数据（按时间分组，各模型 token 累计）
   const stackedAreaData = useMemo(() => {
@@ -1293,6 +1425,53 @@ export default function ExplorePage() {
     scatterTooltipRef.current?.show(payload, x, y);
   }, []);
 
+  const applyPresetRange = useCallback((days: number) => {
+    setSelectionSource("local");
+    setRangeMode("preset");
+    setRangeDays(days);
+    setAppliedDays(days);
+    setCustomPickerOpen(false);
+    setCustomError(null);
+  }, []);
+
+  const applyCustomRange = useCallback(() => {
+    if (!customDraftStart || !customDraftEnd) {
+      setCustomError("请选择开始和结束日期");
+      return;
+    }
+    const startDate = new Date(customDraftStart);
+    const endDate = new Date(customDraftEnd);
+    if (!Number.isFinite(startDate.getTime()) || !Number.isFinite(endDate.getTime())) {
+      setCustomError("日期无效");
+      return;
+    }
+    if (endDate < startDate) {
+      setCustomError("结束日期需不早于开始日期");
+      return;
+    }
+    setCustomError(null);
+    setSelectionSource("local");
+    setRangeMode("custom");
+    setCustomStart(customDraftStart);
+    setCustomEnd(customDraftEnd);
+    const days = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / DAY_MS) + 1);
+    setRangeDays(days);
+    setAppliedDays(days);
+    setCustomPickerOpen(false);
+  }, [customDraftStart, customDraftEnd]);
+
+  const applyDashboardRange = useCallback(() => {
+    const next = globalSelection;
+    setSelectionSource("global");
+    setRangeMode(next.mode);
+    setRangeDays(next.days);
+    setCustomStart(next.start);
+    setCustomEnd(next.end);
+    setAppliedDays(next.days);
+    setCustomPickerOpen(false);
+    setCustomError(null);
+  }, [globalSelection]);
+
     return (
       <main className="min-h-screen bg-slate-900 px-6 pb-4 pt-8 text-slate-100">
       <header className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
@@ -1300,12 +1479,103 @@ export default function ExplorePage() {
           <h1 className="text-2xl font-bold text-white">数据探索</h1>
           <p className="text-sm text-slate-400">每个点代表一次请求（X=时间，Y=token 数，颜色=模型）</p>
         </div>
-        <div className="text-sm text-slate-300">
-          <span className="text-slate-400">时间范围：</span>
-          <span>{`最近 ${rangeDays} 天（与仪表盘同步）`}</span>
-          {data?.step && data.step > 1 ? (
-            <span className="ml-3 text-slate-400">{`已抽样：每 ${data.step} 个点取 1 个`}</span>
-          ) : null}
+        <div className="flex flex-col items-start gap-2 text-sm text-slate-300 md:items-end">
+          <div className="flex flex-wrap items-center gap-2 md:justify-end">
+            {[7, 14, 30].map((days) => (
+              <button
+                key={days}
+                onClick={() => applyPresetRange(days)}
+                className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                  rangeMode === "preset" && selectionSource === "local" && rangeDays === days
+                    ? "border-indigo-500 bg-indigo-500/20 text-indigo-100"
+                    : "border-slate-700 bg-slate-800 text-slate-200 hover:border-slate-500"
+                }`}
+              >
+                最近 {days} 天
+              </button>
+            ))}
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setCustomPickerOpen((open) => !open);
+                  setCustomDraftStart(customStart);
+                  setCustomDraftEnd(customEnd);
+                }}
+                className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                  rangeMode === "custom" && selectionSource === "local"
+                    ? "border-indigo-500 bg-indigo-500/20 text-indigo-100"
+                    : "border-slate-700 bg-slate-800 text-slate-200 hover:border-slate-500"
+                }`}
+              >
+                自定义
+              </button>
+              {customPickerOpen ? (
+                <div className="absolute right-0 z-30 mt-2 w-72 rounded-xl border border-slate-700 bg-slate-900 p-4 shadow-2xl">
+                  <div className="space-y-3 text-sm">
+                    <div className="grid grid-cols-1 gap-2">
+                      <label className="text-slate-300">
+                        开始日期
+                        <input
+                          type="date"
+                          className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
+                          value={customDraftStart}
+                          max={customDraftEnd || undefined}
+                          onChange={(e) => setCustomDraftStart(e.target.value)}
+                        />
+                      </label>
+                      <label className="text-slate-300">
+                        结束日期
+                        <input
+                          type="date"
+                          className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
+                          value={customDraftEnd}
+                          min={customDraftStart || undefined}
+                          onChange={(e) => setCustomDraftEnd(e.target.value)}
+                        />
+                      </label>
+                    </div>
+                    {customError ? <p className="text-xs text-red-400">{customError}</p> : null}
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCustomPickerOpen(false);
+                          setCustomError(null);
+                          setCustomDraftStart(customStart);
+                          setCustomDraftEnd(customEnd);
+                        }}
+                        className="rounded-lg px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800"
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="button"
+                        onClick={applyCustomRange}
+                        className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
+                      >
+                        应用
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <button
+              onClick={applyDashboardRange}
+              className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                selectionSource === "global"
+                  ? "border-emerald-500 bg-emerald-500/20 text-emerald-100"
+                  : "border-slate-700 bg-slate-800 text-slate-200 hover:border-slate-500"
+              }`}
+            >
+              跟随仪表盘
+            </button>
+          </div>
+          <div className="text-xs text-slate-400">
+            <span className="text-slate-500">时间范围：</span>
+            <span>{rangeSubtitle}</span>
+            {data?.step && data.step > 1 ? <span className="ml-3 text-slate-500">{`已抽样：每 ${data.step} 个点取 1 个`}</span> : null}
+          </div>
         </div>
       </header>
 

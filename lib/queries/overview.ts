@@ -1,4 +1,4 @@
-import { and, eq, sql, gte } from "drizzle-orm";
+import { and, eq, sql, gte, lte } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { modelPrices, usageRecords } from "@/lib/db/schema";
@@ -43,10 +43,30 @@ function toNumber(value: unknown): number {
   return Number.isFinite(num) ? num : 0;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 function normalizeDays(days?: number | null) {
   const fallback = 14;
   if (days == null || Number.isNaN(days)) return fallback;
   return Math.min(Math.max(Math.floor(days), 1), 90);
+}
+
+function parseDateInput(value?: string | Date | null) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function withDayStart(date: Date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function withDayEnd(date: Date) {
+  const d = new Date(date);
+  d.setHours(23, 59, 59, 999);
+  return d;
 }
 
 function normalizePage(value?: number | null) {
@@ -63,15 +83,21 @@ function normalizePageSize(value?: number | null) {
 
 export async function getOverview(
   daysInput?: number,
-  opts?: { model?: string | null; route?: string | null; page?: number | null; pageSize?: number | null }
+  opts?: { model?: string | null; route?: string | null; page?: number | null; pageSize?: number | null; start?: string | Date | null; end?: string | Date | null }
 ): Promise<{ overview: UsageOverview; empty: boolean; days: number; meta: OverviewMeta; filters: { models: string[]; routes: string[] } }> {
-  const days = normalizeDays(daysInput);
+  const startDate = parseDateInput(opts?.start);
+  const endDate = parseDateInput(opts?.end);
+  const hasCustomRange = startDate && endDate && endDate >= startDate;
+
+  const days = hasCustomRange ? Math.max(1, Math.round((withDayEnd(endDate).getTime() - withDayStart(startDate).getTime()) / DAY_MS) + 1) : normalizeDays(daysInput);
   const page = normalizePage(opts?.page ?? undefined);
   const pageSize = normalizePageSize(opts?.pageSize ?? undefined);
   const offset = (page - 1) * pageSize;
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const since = hasCustomRange ? withDayStart(startDate!) : new Date(Date.now() - days * DAY_MS);
+  const until = hasCustomRange ? withDayEnd(endDate!) : undefined;
 
   const baseWhereParts: SQL[] = [gte(usageRecords.occurredAt, since)];
+  if (until) baseWhereParts.push(lte(usageRecords.occurredAt, until));
   const baseWhere = baseWhereParts.length ? and(...baseWhereParts) : undefined;
 
   const filterWhereParts: SQL[] = [...baseWhereParts];

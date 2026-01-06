@@ -19,13 +19,15 @@ const OVERVIEW_CACHE_TTL_MS = 30_000;
 const OVERVIEW_CACHE_MAX_ENTRIES = 100;
 const overviewCache = new Map<string, CachedOverview>();
 
-function makeCacheKey(input: { days?: number; model?: string | null; route?: string | null; page?: number; pageSize?: number }) {
+function makeCacheKey(input: { days?: number; model?: string | null; route?: string | null; page?: number; pageSize?: number; start?: string | null; end?: string | null }) {
   return JSON.stringify({
     days: input.days ?? null,
     model: input.model ?? null,
     route: input.route ?? null,
     page: input.page ?? null,
-    pageSize: input.pageSize ?? null
+    pageSize: input.pageSize ?? null,
+    start: input.start ?? null,
+    end: input.end ?? null
   });
 }
 
@@ -62,10 +64,12 @@ export async function GET(request: Request) {
     const route = searchParams.get("route");
     const pageParam = searchParams.get("page");
     const pageSizeParam = searchParams.get("pageSize");
+    const start = searchParams.get("start");
+    const end = searchParams.get("end");
 
     const page = pageParam ? Number.parseInt(pageParam, 10) : undefined;
     const pageSize = pageSizeParam ? Number.parseInt(pageSizeParam, 10) : undefined;
-    const cacheKey = makeCacheKey({ days, model, route, page, pageSize });
+    const cacheKey = makeCacheKey({ days, model, route, page, pageSize, start, end });
     const cached = getCached(cacheKey);
     if (cached) {
       return NextResponse.json(cached, { status: 200 });
@@ -75,7 +79,9 @@ export async function GET(request: Request) {
       model: model || undefined,
       route: route || undefined,
       page,
-      pageSize
+      pageSize,
+      start,
+      end
     });
 
     const payload = { overview, empty, days: appliedDays, meta, filters };

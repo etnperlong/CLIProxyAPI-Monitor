@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useMemo, useRef, type FormEvent } fro
 import { ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, BarChart, Bar, Legend, ComposedChart, PieChart, Pie, Cell } from "recharts";
 import type { TooltipProps } from "recharts";
 import { formatCurrency, formatNumber, formatCompactNumber, formatNumberWithCommas, formatHourLabel } from "@/lib/utils";
-import { AlertTriangle, Info, LucideIcon, Activity, Save, RefreshCw, Moon, Sun, Pencil, Trash2, Maximize2 } from "lucide-react";
+import { AlertTriangle, Info, LucideIcon, Activity, Save, RefreshCw, Moon, Sun, Pencil, Trash2, Maximize2, CalendarRange } from "lucide-react";
 import type { ModelPrice, UsageOverview, UsageSeriesPoint } from "@/lib/types";
 import { Modal } from "@/app/components/Modal";
 
@@ -30,6 +30,12 @@ const hourFormatter = new Intl.DateTimeFormat("en-CA", {
 });
 
 const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function formatDateInputValue(date: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
 
 type TooltipValue = number | string | Array<number | string> | undefined;
 
@@ -102,12 +108,37 @@ export default function DashboardPage() {
   const [overviewError, setOverviewError] = useState<string | null>(null);
   const [overviewEmpty, setOverviewEmpty] = useState(false);
   const [loadingOverview, setLoadingOverview] = useState(true);
-  const [rangeDays, setRangeDays] = useState(() => {
-    if (typeof window === "undefined") return 14;
-    const saved = window.localStorage.getItem("rangeDays");
-    const parsed = saved ? Number.parseInt(saved, 10) : NaN;
-    return Number.isFinite(parsed) ? parsed : 14;
+  const [rangeInit] = useState(() => {
+    const defaultEnd = new Date();
+    const defaultStart = new Date(defaultEnd.getTime() - 6 * DAY_MS);
+    const fallback = { mode: "preset" as const, days: 14, start: formatDateInputValue(defaultStart), end: formatDateInputValue(defaultEnd) };
+    if (typeof window === "undefined") return fallback;
+    const saved = window.localStorage.getItem("rangeSelection");
+    if (!saved) return fallback;
+    try {
+      const parsed = JSON.parse(saved) as { mode?: "preset" | "custom"; days?: number; start?: string; end?: string };
+      if (!parsed || (parsed.mode !== "preset" && parsed.mode !== "custom")) return fallback;
+      return {
+        mode: parsed.mode,
+        days: Number.isFinite(parsed.days) ? Math.max(1, Number(parsed.days)) : fallback.days,
+        start: parsed.start || fallback.start,
+        end: parsed.end || fallback.end
+      };
+    } catch (err) {
+      console.warn("Failed to parse saved rangeSelection", err);
+      return fallback;
+    }
   });
+  const [rangeMode, setRangeMode] = useState<"preset" | "custom">(rangeInit.mode);
+  const [rangeDays, setRangeDays] = useState(rangeInit.days);
+  const [customStart, setCustomStart] = useState(rangeInit.start);
+  const [customEnd, setCustomEnd] = useState(rangeInit.end);
+  const [appliedDays, setAppliedDays] = useState(rangeInit.days);
+  const [customPickerOpen, setCustomPickerOpen] = useState(false);
+  const [customDraftStart, setCustomDraftStart] = useState(rangeInit.start);
+  const [customDraftEnd, setCustomDraftEnd] = useState(rangeInit.end);
+  const [customError, setCustomError] = useState<string | null>(null);
+  const customPickerRef = useRef<HTMLDivElement | null>(null);
   const [hourRange, setHourRange] = useState<"all" | "12h" | "24h">("all");
   const [modelOptions, setModelOptions] = useState<string[]>([]);
   const [routeOptions, setRouteOptions] = useState<string[]>([]);
@@ -155,8 +186,11 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem("rangeDays", String(rangeDays));
-  }, [rangeDays]);
+    window.localStorage.setItem(
+      "rangeSelection",
+      JSON.stringify({ mode: rangeMode, days: rangeDays, start: customStart, end: customEnd })
+    );
+  }, [rangeMode, rangeDays, customStart, customEnd]);
 
   const [trendVisible, setTrendVisible] = useState<Record<string, boolean>>({
     requests: true,
@@ -457,6 +491,19 @@ export default function DashboardPage() {
   }, [applyTheme]);
 
   useEffect(() => {
+    if (!customPickerOpen) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (customPickerRef.current && !customPickerRef.current.contains(target)) {
+        setCustomPickerOpen(false);
+        setCustomError(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [customPickerOpen]);
+
+  useEffect(() => {
     const load = async () => {
       try {
         const res = await fetch("/api/prices", { cache: "no-store" });
@@ -479,6 +526,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!ready) return;
+    if (rangeMode === "custom" && (!customStart || !customEnd)) return;
 
     const controller = new AbortController();
     let active = true;
@@ -487,7 +535,12 @@ export default function DashboardPage() {
       setLoadingOverview(true);
       try {
         const params = new URLSearchParams();
-        params.set("days", String(rangeDays));
+        if (rangeMode === "custom") {
+          params.set("start", customStart);
+          params.set("end", customEnd);
+        } else {
+          params.set("days", String(rangeDays));
+        }
         if (filterModel) params.set("model", filterModel);
         if (filterRoute) params.set("route", filterRoute);
         params.set("page", String(page));
@@ -510,6 +563,7 @@ export default function DashboardPage() {
         setPage(data.meta?.page ?? 1);
         setModelOptions(Array.from(new Set(data.filters?.models ?? [])));
         setRouteOptions(Array.from(new Set(data.filters?.routes ?? [])));
+        setAppliedDays(data.days ?? rangeDays);
       } catch (err) {
         if (!active) return;
         const error = err as Error;
@@ -525,7 +579,7 @@ export default function DashboardPage() {
       active = false;
       controller.abort();
     };
-  }, [rangeDays, filterModel, filterRoute, page, refreshTrigger, ready]);
+  }, [rangeMode, customStart, customEnd, rangeDays, filterModel, filterRoute, page, refreshTrigger, ready]);
 
   const overviewData = overview;
   const showEmpty = overviewEmpty || !overview;
@@ -555,6 +609,13 @@ export default function DashboardPage() {
     const models = overviewData?.models ?? [];
     return [...models].sort((a, b) => b.cost - a.cost);
   }, [overviewData]);
+
+  const rangeSubtitle = useMemo(() => {
+    if (rangeMode === "custom" && customStart && customEnd) {
+      return `${customStart} ~ ${customEnd}（共 ${appliedDays} 天）`;
+    }
+    return `最近 ${appliedDays} 天`;
+  }, [rangeMode, customStart, customEnd, appliedDays]);
 
 
   const applyFilters = () => {
@@ -784,11 +845,13 @@ export default function DashboardPage() {
           <button
             key={days}
             onClick={() => {
+              setRangeMode("preset");
               setRangeDays(days);
               setPage(1);
+              setCustomPickerOpen(false);
             }}
             className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition ${
-              rangeDays === days
+              rangeMode === "preset" && rangeDays === days
                 ? "border-indigo-500 bg-indigo-600 text-white"
                 : darkMode ? "border-slate-700 bg-slate-800 text-slate-300 hover:border-slate-500" : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
             }`}
@@ -796,6 +859,110 @@ export default function DashboardPage() {
             最近 {days} 天
           </button>
         ))}
+        <div className="relative" ref={customPickerRef}>
+          <button
+            onClick={() => {
+              setCustomPickerOpen((open) => !open);
+              setCustomDraftStart(customStart);
+              setCustomDraftEnd(customEnd);
+            }}
+            className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition ${
+              rangeMode === "custom"
+                ? "border-indigo-500 bg-indigo-600 text-white"
+                : darkMode ? "border-slate-700 bg-slate-800 text-slate-300 hover:border-slate-500" : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
+            }`}
+          >
+            自定义
+          </button>
+          {customPickerOpen ? (
+            <div
+              className={`absolute z-30 mt-2 w-72 rounded-xl border p-4 shadow-2xl ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}
+            >
+              <div className="space-y-3 text-sm">
+                <div className="grid grid-cols-1 gap-2">
+                  <label className={darkMode ? "text-slate-300" : "text-slate-700"}>
+                    开始日期
+                    <input
+                      type="date"
+                      className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none ${darkMode ? "border-slate-700 bg-slate-800 text-white" : "border-slate-300 bg-white text-slate-900"}`}
+                      value={customDraftStart}
+                      max={customDraftEnd || undefined}
+                      onChange={(e) => setCustomDraftStart(e.target.value)}
+                    />
+                  </label>
+                  <label className={darkMode ? "text-slate-300" : "text-slate-700"}>
+                    结束日期
+                    <input
+                      type="date"
+                      className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none ${darkMode ? "border-slate-700 bg-slate-800 text-white" : "border-slate-300 bg-white text-slate-900"}`}
+                      value={customDraftEnd}
+                      min={customDraftStart || undefined}
+                      onChange={(e) => setCustomDraftEnd(e.target.value)}
+                    />
+                  </label>
+                </div>
+                {customError ? (
+                  <p className="text-xs text-red-400">{customError}</p>
+                ) : null}
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustomPickerOpen(false);
+                      setCustomError(null);
+                      setCustomDraftStart(customStart);
+                      setCustomDraftEnd(customEnd);
+                    }}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-medium ${darkMode ? "text-slate-300 hover:bg-slate-800" : "text-slate-700 hover:bg-slate-100"}`}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!customDraftStart || !customDraftEnd) {
+                        setCustomError("请选择开始和结束日期");
+                        return;
+                      }
+                      const startDate = new Date(customDraftStart);
+                      const endDate = new Date(customDraftEnd);
+                      if (!Number.isFinite(startDate.getTime()) || !Number.isFinite(endDate.getTime())) {
+                        setCustomError("日期无效");
+                        return;
+                      }
+                      if (endDate < startDate) {
+                        setCustomError("结束日期需不早于开始日期");
+                        return;
+                      }
+                      setCustomError(null);
+                      setCustomStart(customDraftStart);
+                      setCustomEnd(customDraftEnd);
+                      setRangeMode("custom");
+                      setPage(1);
+                      setCustomPickerOpen(false);
+                      setRefreshTrigger((prev) => prev + 1);
+                    }}
+                    className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
+                  >
+                    应用
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+        {rangeMode === "custom" ? (
+          <div
+            className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium ${
+              darkMode
+                ? "border-slate-700 bg-slate-800 text-slate-200 shadow-[0_4px_20px_rgba(15,23,42,0.35)]"
+                : "border-slate-200 bg-white text-slate-700 shadow-[0_8px_30px_rgba(15,23,42,0.08)]"
+            }`}
+          >
+            <CalendarRange className="h-3.5 w-3.5 shrink-0 text-indigo-400" />
+            <span className="whitespace-nowrap">{rangeSubtitle}</span>
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center gap-2">
           <ComboBox
             value={filterModelInput}
@@ -845,9 +1012,7 @@ export default function DashboardPage() {
             {/* 请求数 skeleton */}
             <Skeleton className="h-28 rounded-2xl" />
             {/* Tokens skeleton - 2列 */}
-            <div className="col-span-2">
-              <Skeleton className="h-28 rounded-2xl" />
-            </div>
+            <Skeleton className="col-span-2 h-28 rounded-2xl" />
             {/* 成功率 skeleton */}
             <Skeleton className="h-28 rounded-2xl" />
             {/* TPM skeleton */}
@@ -860,7 +1025,7 @@ export default function DashboardPage() {
         ) : (
           <>
             {/* 请求数 */}
-            <div className={`rounded-2xl p-5 shadow-sm ring-1 transition-all duration-200 ${darkMode ? "bg-slate-800/50 ring-slate-700 hover:shadow-lg hover:shadow-slate-700/30 hover:ring-slate-600" : "bg-white ring-slate-200 hover:shadow-lg hover:ring-slate-300"}`}>
+            <div className={`animate-card-float rounded-2xl p-5 shadow-sm ring-1 transition-all duration-200 ${darkMode ? "bg-slate-800/50 ring-slate-700 hover:shadow-lg hover:shadow-slate-700/30 hover:ring-slate-600" : "bg-white ring-slate-200 hover:shadow-lg hover:ring-slate-300"}`} style={{ animationDelay: '0.05s' }}>
               <div className={`text-sm uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>请求数</div>
               <div className={`mt-3 text-2xl font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>
                 {formatNumberWithCommas(overviewData.totalRequests)}
@@ -878,7 +1043,7 @@ export default function DashboardPage() {
             </div>
             
             {/* Tokens - 占两列 */}
-            <div className={`col-span-2 rounded-2xl p-5 shadow-sm ring-1 transition-all duration-200 ${darkMode ? "bg-slate-800/50 ring-slate-700 hover:shadow-lg hover:shadow-slate-700/30 hover:ring-slate-600" : "bg-white ring-slate-200 hover:shadow-lg hover:ring-slate-300"}`}>
+            <div className={`animate-card-float col-span-2 rounded-2xl p-5 shadow-sm ring-1 transition-all duration-200 ${darkMode ? "bg-slate-800/50 ring-slate-700 hover:shadow-lg hover:shadow-slate-700/30 hover:ring-slate-600" : "bg-white ring-slate-200 hover:shadow-lg hover:ring-slate-300"}`} style={{ animationDelay: '0.1s' }}>
               <div className="flex items-center justify-between">
                 <div className={`text-sm uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Tokens</div>
                 <div className={`text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
@@ -909,35 +1074,35 @@ export default function DashboardPage() {
             </div>
             
             {/* 预估费用 */}
-            <div className={`rounded-2xl p-5 shadow-sm ring-1 transition-all duration-200 ${darkMode ? "bg-gradient-to-br from-amber-500/20 to-amber-700/10 ring-amber-400/40 hover:shadow-lg hover:shadow-amber-500/20 hover:ring-amber-400/60" : "bg-amber-50 ring-amber-200 hover:shadow-lg hover:ring-amber-300"}`}>
+            <div className={`animate-card-float rounded-2xl p-5 shadow-sm ring-1 transition-all duration-200 ${darkMode ? "bg-gradient-to-br from-amber-500/20 to-amber-700/10 ring-amber-400/40 hover:shadow-lg hover:shadow-amber-500/20 hover:ring-amber-400/60" : "bg-amber-50 ring-amber-200 hover:shadow-lg hover:ring-amber-300"}`} style={{ animationDelay: '0.15s' }}>
               <div className="text-sm uppercase tracking-wide text-amber-400">预估费用</div>
               <div className={`mt-3 text-2xl font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>{formatCurrency(overviewData.totalCost)}</div>
               <p className={`mt-2 text-xs ${darkMode ? "text-amber-300/70" : "text-amber-700/70"}`}>基于模型价格</p>
             </div>
 
             {/* TPM */}
-            <div className={`rounded-2xl p-5 shadow-sm ring-1 transition-all duration-200 ${darkMode ? "bg-gradient-to-br from-emerald-600/20 to-emerald-800/10 ring-emerald-500/30 hover:shadow-lg hover:shadow-emerald-500/20 hover:ring-emerald-500/50" : "bg-emerald-50 ring-emerald-200 hover:shadow-lg hover:ring-emerald-300"}`}>
+            <div className={`animate-card-float rounded-2xl p-5 shadow-sm ring-1 transition-all duration-200 ${darkMode ? "bg-gradient-to-br from-emerald-600/20 to-emerald-800/10 ring-emerald-500/30 hover:shadow-lg hover:shadow-emerald-500/20 hover:ring-emerald-500/50" : "bg-emerald-50 ring-emerald-200 hover:shadow-lg hover:ring-emerald-300"}`} style={{ animationDelay: '0.2s' }}>
               <div className="text-sm uppercase tracking-wide text-emerald-400">平均 TPM</div>
               <div className={`mt-3 text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
-                {(overviewData.totalTokens / (rangeDays * 24 * 60)).toFixed(2)}
+                {(overviewData.totalTokens / (appliedDays * 24 * 60)).toFixed(2)}
               </div>
               <p className={`mt-2 text-xs ${darkMode ? "text-emerald-300/70" : "text-emerald-600/70"}`}>每分钟Token</p>
             </div>
 
             {/* RPM */}
-            <div className={`rounded-2xl p-5 shadow-sm ring-1 transition-all duration-200 ${darkMode ? "bg-gradient-to-br from-blue-600/20 to-blue-800/10 ring-blue-500/30 hover:shadow-lg hover:shadow-blue-500/20 hover:ring-blue-500/50" : "bg-blue-50 ring-blue-200 hover:shadow-lg hover:ring-blue-300"}`}>
+            <div className={`animate-card-float rounded-2xl p-5 shadow-sm ring-1 transition-all duration-200 ${darkMode ? "bg-gradient-to-br from-blue-600/20 to-blue-800/10 ring-blue-500/30 hover:shadow-lg hover:shadow-blue-500/20 hover:ring-blue-500/50" : "bg-blue-50 ring-blue-200 hover:shadow-lg hover:ring-blue-300"}`} style={{ animationDelay: '0.25s' }}>
               <div className="text-sm uppercase tracking-wide text-blue-400">平均 RPM</div>
               <div className={`mt-3 text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
-                {(overviewData.totalRequests / (rangeDays * 24 * 60)).toFixed(2)}
+                {(overviewData.totalRequests / (appliedDays * 24 * 60)).toFixed(2)}
               </div>
               <p className={`mt-2 text-xs ${darkMode ? "text-blue-300/70" : "text-blue-600/70"}`}>每分钟请求</p>
             </div>
 
             {/* 日均请求 */}
-            <div className={`rounded-2xl p-5 shadow-sm ring-1 transition-all duration-200 ${darkMode ? "bg-gradient-to-br from-purple-600/20 to-purple-800/10 ring-purple-500/30 hover:shadow-lg hover:shadow-purple-500/20 hover:ring-purple-500/50" : "bg-purple-50 ring-purple-200 hover:shadow-lg hover:ring-purple-300"}`}>
+            <div className={`animate-card-float rounded-2xl p-5 shadow-sm ring-1 transition-all duration-200 ${darkMode ? "bg-gradient-to-br from-purple-600/20 to-purple-800/10 ring-purple-500/30 hover:shadow-lg hover:shadow-purple-500/20 hover:ring-purple-500/50" : "bg-purple-50 ring-purple-200 hover:shadow-lg hover:ring-purple-300"}`} style={{ animationDelay: '0.3s' }}>
               <div className="text-sm uppercase tracking-wide text-purple-400">日均请求 (RPD)</div>
               <div className={`mt-3 text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
-                {formatCompactNumber(Math.round(overviewData.totalRequests / rangeDays))}
+                {formatCompactNumber(Math.round(overviewData.totalRequests / appliedDays))}
               </div>
               <p className={`mt-2 text-xs ${darkMode ? "text-purple-300/70" : "text-purple-600/70"}`}>每日请求数</p>
             </div>
@@ -946,30 +1111,33 @@ export default function DashboardPage() {
       </section>
 
       <section className="mt-8 grid gap-6 lg:grid-cols-5">
-        <div className={`rounded-2xl p-6 shadow-sm ring-1 lg:col-span-3 flex flex-col ${darkMode ? "bg-slate-800/50 ring-slate-700" : "bg-white ring-slate-200"}`}>
-          <div className="flex items-center justify-between">
-            <h2 className={`text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>每日用量趋势</h2>
-            <div className="flex items-center gap-2">
-              <span className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{`最近 ${rangeDays} 天`}</span>
-              <button
-                type="button"
-                onClick={() => setFullscreenChart("trend")}
-                className={`rounded-lg p-1.5 transition ${darkMode ? "text-slate-400 hover:bg-slate-700 hover:text-white" : "text-slate-500 hover:bg-slate-200 hover:text-slate-900"}`}
-                title="全屏查看"
-              >
-                <Maximize2 className="h-4 w-4" />
-              </button>
-            </div>
+        {loadingOverview || !overviewData ? (
+          <div className="lg:col-span-3">
+            <Skeleton className="h-[400px] rounded-2xl" />
           </div>
-          <div className="mt-4 flex-1 min-h-64">
-            {loadingOverview ? (
-              <Skeleton className="h-full rounded-xl" />
-            ) : showEmpty || !overviewData ? (
-              <div className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-800/30 text-center">
-                <p className="text-base text-slate-400">暂无图表数据</p>
-                <p className="mt-1 text-sm text-slate-500">请先触发 /api/sync 同步数据</p>
+        ) : (
+          <div className={`animate-card-float rounded-2xl p-6 shadow-sm ring-1 lg:col-span-3 flex flex-col ${darkMode ? "bg-slate-800/50 ring-slate-700" : "bg-white ring-slate-200"}`} style={{ animationDelay: '0.15s' }}>
+            <div className="flex items-center justify-between">
+              <h2 className={`text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>每日用量趋势</h2>
+              <div className="flex items-center gap-2">
+                <span className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{rangeSubtitle}</span>
+                <button
+                  type="button"
+                  onClick={() => setFullscreenChart("trend")}
+                  className={`rounded-lg p-1.5 transition ${darkMode ? "text-slate-400 hover:bg-slate-700 hover:text-white" : "text-slate-500 hover:bg-slate-200 hover:text-slate-900"}`}
+                  title="全屏查看"
+                >
+                  <Maximize2 className="h-4 w-4" />
+                </button>
               </div>
-            ) : (
+            </div>
+            <div className="mt-4 flex-1 min-h-64">
+              {showEmpty ? (
+                <div className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-800/30 text-center">
+                  <p className="text-base text-slate-400">暂无图表数据</p>
+                  <p className="mt-1 text-sm text-slate-500">请先触发 /api/sync 同步数据</p>
+                </div>
+              ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={overviewData.byDay} margin={{ top: 0, right: 12, left: 0, bottom: 0 }}>
                   <CartesianGrid stroke="#334155" strokeDasharray="5 5" />
@@ -1062,47 +1230,51 @@ export default function DashboardPage() {
                   <Line hide={!trendVisible.cost} yAxisId={trendConfig.lineAxisMap.cost} type="monotone" dataKey="cost" stroke="#fbbf24" strokeWidth={2} name="费用" dot={{ r: 3, fill: "#fbbf24", stroke: "#fff", strokeWidth: 1, fillOpacity: 0.2 }} activeDot={{ r: 6, stroke: "#fff", strokeWidth: 2 }} />
                 </LineChart>
               </ResponsiveContainer>
-            )}
-          </div>
-        </div>
-
-        {/* 模型用量饼图 */}
-        <div className={`rounded-2xl p-6 shadow-sm ring-1 lg:col-span-2 flex flex-col ${darkMode ? "bg-slate-800/50 ring-slate-700" : "bg-white ring-slate-200"}`}>
-          <div className="flex items-center justify-between">
-            <h2 className={`text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>模型用量分布</h2>
-            <div className="flex items-center gap-2">
-              <div className={`flex items-center gap-1 rounded-lg border p-0.5 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-300 bg-slate-100"}`}>
-                <button
-                  onClick={() => setPieMode("tokens")}
-                  className={`rounded-md px-2 py-1 text-xs font-medium transition ${pieMode === "tokens" ? "bg-indigo-600 text-white" : darkMode ? "text-slate-400 hover:text-slate-200" : "text-slate-600 hover:text-slate-900"}`}
-                >
-                  Token
-                </button>
-                <button
-                  onClick={() => setPieMode("requests")}
-                  className={`rounded-md px-2 py-1 text-xs font-medium transition ${pieMode === "requests" ? "bg-indigo-600 text-white" : darkMode ? "text-slate-400 hover:text-slate-200" : "text-slate-600 hover:text-slate-900"}`}
-                >
-                  请求
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={() => setFullscreenChart("pie")}
-                className={`rounded-lg p-1.5 transition ${darkMode ? "text-slate-400 hover:bg-slate-700 hover:text-white" : "text-slate-500 hover:bg-slate-200 hover:text-slate-900"}`}
-                title="全屏查看"
-              >
-                <Maximize2 className="h-4 w-4" />
-              </button>
+              )}
             </div>
           </div>
-          <div className="mt-4 flex gap-4 h-[300px]">
-            {loadingOverview ? (
-              <Skeleton className="h-full w-full rounded-xl" />
-            ) : showEmpty || !overviewData || overviewData.models.length === 0 ? (
-              <div className="flex-1 flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-800/30 text-center">
-                <p className="text-base text-slate-400">暂无模型数据</p>
+        )}
+
+        {/* 模型用量饼图 */}
+        {loadingOverview || !overviewData ? (
+          <div className="lg:col-span-2">
+            <Skeleton className="h-[400px] rounded-2xl" />
+          </div>
+        ) : (
+          <div className={`animate-card-float rounded-2xl p-6 shadow-sm ring-1 lg:col-span-2 flex flex-col ${darkMode ? "bg-slate-800/50 ring-slate-700" : "bg-white ring-slate-200"}`} style={{ animationDelay: '0.2s' }}>
+            <div className="flex items-center justify-between">
+              <h2 className={`text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>模型用量分布</h2>
+              <div className="flex items-center gap-2">
+                <div className={`flex items-center gap-1 rounded-lg border p-0.5 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-300 bg-slate-100"}`}>
+                  <button
+                    onClick={() => setPieMode("tokens")}
+                    className={`rounded-md px-2 py-1 text-xs font-medium transition ${pieMode === "tokens" ? "bg-indigo-600 text-white" : darkMode ? "text-slate-400 hover:text-slate-200" : "text-slate-600 hover:text-slate-900"}`}
+                  >
+                    Token
+                  </button>
+                  <button
+                    onClick={() => setPieMode("requests")}
+                    className={`rounded-md px-2 py-1 text-xs font-medium transition ${pieMode === "requests" ? "bg-indigo-600 text-white" : darkMode ? "text-slate-400 hover:text-slate-200" : "text-slate-600 hover:text-slate-900"}`}
+                  >
+                    请求
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFullscreenChart("pie")}
+                  className={`rounded-lg p-1.5 transition ${darkMode ? "text-slate-400 hover:bg-slate-700 hover:text-white" : "text-slate-500 hover:bg-slate-200 hover:text-slate-900"}`}
+                  title="全屏查看"
+                >
+                  <Maximize2 className="h-4 w-4" />
+                </button>
               </div>
-            ) : (
+            </div>
+            <div className="mt-4 flex gap-4 h-[300px]">
+              {showEmpty || overviewData.models.length === 0 ? (
+                <div className="flex-1 flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-800/30 text-center">
+                  <p className="text-base text-slate-400">暂无模型数据</p>
+                </div>
+              ) : (
               <>
                 {/* 饼图 */}
                 <div
@@ -1229,57 +1401,61 @@ export default function DashboardPage() {
                 </div>
               </>
             )}
+            </div>
           </div>
-        </div>
+        )}
       </section>
 
       {/* 第二行：每小时负载 + 模型费用 */}
       <section className="mt-6 grid gap-6 lg:grid-cols-5">
         {/* 每小时负载分布 */}
-        <div className={`rounded-2xl p-6 shadow-sm ring-1 lg:col-span-3 flex flex-col ${darkMode ? "bg-slate-800/50 ring-slate-700" : "bg-white ring-slate-200"}`}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <h2 className={`text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>每小时负载分布</h2>
-              <div className="flex items-center gap-1">
-                {hourRangeOptions.map((opt) => (
-                  <button
-                    key={opt.key}
-                    onClick={() => setHourRange(opt.key)}
-                    className={`rounded-md border px-2 py-1 text-xs transition ${
-                      hourRange === opt.key
-                        ? "border-indigo-500 bg-indigo-600 text-white"
-                        : darkMode ? "border-slate-700 bg-slate-800 text-slate-300 hover:border-slate-500" : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className={`flex items-center gap-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-                <Info className="h-3 w-3" />
-                Token 类型分布
-              </span>
-              <button
-                type="button"
-                onClick={() => setFullscreenChart("stacked")}
-                className={`rounded-lg p-1.5 transition ${darkMode ? "text-slate-400 hover:bg-slate-700 hover:text-white" : "text-slate-500 hover:bg-slate-200 hover:text-slate-900"}`}
-                title="全屏查看"
-              >
-                <Maximize2 className="h-4 w-4" />
-              </button>
-            </div>
+        {loadingOverview || !overviewData ? (
+          <div className="lg:col-span-3">
+            <Skeleton className="h-[400px] rounded-2xl" />
           </div>
-          <div className="mt-4 flex-1 min-h-64">
-            {loadingOverview ? (
-              <Skeleton className="h-full rounded-xl" />
-            ) : !overviewData || showEmpty ? (
-              <div className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-800/30 text-center">
-                <p className="text-base text-slate-400">暂无小时数据</p>
-                <p className="mt-1 text-sm text-slate-500">请先触发 /api/sync 同步数据</p>
+        ) : (
+          <div className={`animate-card-float rounded-2xl p-6 shadow-sm ring-1 lg:col-span-3 flex flex-col ${darkMode ? "bg-slate-800/50 ring-slate-700" : "bg-white ring-slate-200"}`} style={{ animationDelay: '0.25s' }}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <h2 className={`text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>每小时负载分布</h2>
+                <div className="flex items-center gap-1">
+                  {hourRangeOptions.map((opt) => (
+                    <button
+                      key={opt.key}
+                      onClick={() => setHourRange(opt.key)}
+                      className={`rounded-md border px-2 py-1 text-xs transition ${
+                        hourRange === opt.key
+                          ? "border-indigo-500 bg-indigo-600 text-white"
+                          : darkMode ? "border-slate-700 bg-slate-800 text-slate-300 hover:border-slate-500" : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            ) : (
+              <div className="flex items-center gap-2">
+                <span className={`flex items-center gap-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                  <Info className="h-3 w-3" />
+                  Token 类型分布
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setFullscreenChart("stacked")}
+                  className={`rounded-lg p-1.5 transition ${darkMode ? "text-slate-400 hover:bg-slate-700 hover:text-white" : "text-slate-500 hover:bg-slate-200 hover:text-slate-900"}`}
+                  title="全屏查看"
+                >
+                  <Maximize2 className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <div className="mt-4 flex-1 min-h-64">
+              {showEmpty ? (
+                <div className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-800/30 text-center">
+                  <p className="text-base text-slate-400">暂无小时数据</p>
+                  <p className="mt-1 text-sm text-slate-500">请先触发 /api/sync 同步数据</p>
+                </div>
+              ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={hourlySeries} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                   <defs>
@@ -1402,28 +1578,28 @@ export default function DashboardPage() {
                   />
                 </ComposedChart>
               </ResponsiveContainer>
-            )}
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* 模型费用 */}
-        <div className={`rounded-2xl p-6 shadow-sm ring-1 lg:col-span-2 ${darkMode ? "bg-slate-800/50 ring-slate-700" : "bg-white ring-slate-200"}`}>
-          <div className="flex items-center justify-between">
-            <h2 className={`text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>预估模型费用</h2>
-            <span className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>基于配置的价格</span>
+        {loadingOverview || !overviewData ? (
+          <div className="lg:col-span-2">
+            <Skeleton className="h-[400px] rounded-2xl" />
           </div>
-          <div className="scrollbar-slim mt-3 max-h-80 min-h-[14rem] space-y-2 overflow-y-auto">
-            {loadingOverview ? (
-              Array.from({ length: 4 }).map((_, i) => (
-                <div key={`model-skel-${i}`} className="rounded-xl">
-                  <Skeleton className="h-14 rounded-xl" />
+        ) : (
+          <div className={`animate-card-float rounded-2xl p-6 shadow-sm ring-1 lg:col-span-2 ${darkMode ? "bg-slate-800/50 ring-slate-700" : "bg-white ring-slate-200"}`} style={{ animationDelay: '0.3s' }}>
+            <div className="flex items-center justify-between">
+              <h2 className={`text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>预估模型费用</h2>
+              <span className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>基于配置的价格</span>
+            </div>
+            <div className="scrollbar-slim mt-3 max-h-80 min-h-[14rem] space-y-2 overflow-y-auto">
+              {showEmpty ? (
+                <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-800/30 py-6 text-center">
+                  <p className="text-base text-slate-400">暂无模型数据</p>
                 </div>
-              ))
-            ) : showEmpty || !overviewData ? (
-              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-800/30 py-6 text-center">
-                <p className="text-base text-slate-400">暂无模型数据</p>
-              </div>
-            ) : sortedModelsByCost.length === 0 ? (
+              ) : sortedModelsByCost.length === 0 ? (
               <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-800/30 py-6 text-center">
                 <p className="text-base text-slate-400">无匹配的模型</p>
               </div>
@@ -1442,25 +1618,31 @@ export default function DashboardPage() {
                   <div className={`text-base font-semibold ${darkMode ? "text-emerald-400" : "text-emerald-600"}`}>{formatCurrency(model.cost)}</div>
                 </div>
               ))
-            )}
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </section>
 
-      <section className={`mt-8 rounded-2xl p-6 shadow-sm ring-1 ${darkMode ? "bg-slate-800/50 ring-slate-700" : "bg-white ring-slate-200"}`}>
-        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className={`text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>模型价格配置</h2>
-            <p className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>设置每百万 tokens 单价，费用计算将立即更新</p>
-          </div>
-          {status ? (
-            <p className={`text-xs ${status === "已保存" ? "text-emerald-400" : "text-red-400"}`}>
-              {status}
-            </p>
-          ) : null}
+      {loadingOverview || !overviewData ? (
+        <div className="mt-8">
+          <Skeleton className="h-[500px] rounded-2xl" />
         </div>
+      ) : (
+        <section className={`animate-card-float mt-8 rounded-2xl p-6 shadow-sm ring-1 ${darkMode ? "bg-slate-800/50 ring-slate-700" : "bg-white ring-slate-200"}`} style={{ animationDelay: '0.35s' }}>
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h2 className={`text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>模型价格配置</h2>
+              <p className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>设置每百万 tokens 单价，费用计算将立即更新</p>
+            </div>
+            {status ? (
+              <p className={`text-xs ${status === "已保存" ? "text-emerald-400" : "text-red-400"}`}>
+                {status}
+              </p>
+            ) : null}
+          </div>
 
-        <div className="mt-6 grid gap-6 lg:grid-cols-5">
+          <div className="mt-6 grid gap-6 lg:grid-cols-5">
           <form onSubmit={handleSubmit} className={`rounded-xl border p-5 lg:col-span-2 ${darkMode ? "border-slate-700 bg-slate-800/50" : "border-slate-200 bg-slate-50"}`}>
             <div className="grid gap-4">
               <label className={`text-sm font-medium ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
@@ -1557,7 +1739,8 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
-      </section>
+        </section>
+      )}
 
       {/* 编辑价格模态框 */}
       <Modal
