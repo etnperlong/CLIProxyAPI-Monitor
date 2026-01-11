@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useMemo, useRef, type FormEvent } fro
 import { ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, BarChart, Bar, Legend, ComposedChart, PieChart, Pie, Cell } from "recharts";
 import type { TooltipProps } from "recharts";
 import { formatCurrency, formatNumber, formatCompactNumber, formatNumberWithCommas, formatHourLabel } from "@/lib/utils";
-import { AlertTriangle, Info, LucideIcon, Activity, Save, RefreshCw, Moon, Sun, Pencil, Trash2, Maximize2, CalendarRange } from "lucide-react";
+import { AlertTriangle, Info, LucideIcon, Activity, Save, RefreshCw, Moon, Sun, Pencil, Trash2, Maximize2, CalendarRange, X } from "lucide-react";
 import type { ModelPrice, UsageOverview, UsageSeriesPoint } from "@/lib/types";
 import { Modal } from "@/app/components/Modal";
 
@@ -881,9 +881,9 @@ export default function DashboardPage() {
               <Activity className="h-4 w-4" />
               {loadingOverview ? "加载中..." : overview ? "实时数据" : "暂无数据"}
             </div>
-            {lastSyncTime && mounted && (
-              <span className={`text-xs ${darkMode ? "text-slate-500" : "text-slate-500"}`}>
-                上次同步: {lastSyncTime.toLocaleTimeString()}
+            {lastSyncTime && (
+              <span className={`text-xs ${darkMode ? "text-slate-500" : "text-slate-500"}`} suppressHydrationWarning>
+                上次同步: {mounted ? lastSyncTime.toLocaleTimeString() : "--:--:--"}
               </span>
             )}
           </div>
@@ -1022,6 +1022,11 @@ export default function DashboardPage() {
             placeholder="按模型过滤"
             darkMode={darkMode}
             onSelectOption={applyModelOption}
+            onClear={() => {
+              setFilterModelInput("");
+              setFilterModel(undefined);
+              setPage(1);
+            }}
           />
           <ComboBox
             value={filterRouteInput}
@@ -1030,6 +1035,11 @@ export default function DashboardPage() {
             placeholder="按 Key 过滤"
             darkMode={darkMode}
             onSelectOption={applyRouteOption}
+            onClear={() => {
+              setFilterRouteInput("");
+              setFilterRoute(undefined);
+              setPage(1);
+            }}
           />
           <button
             onClick={applyFilters}
@@ -2317,7 +2327,8 @@ function ComboBox({
   placeholder,
   darkMode,
   className,
-  onSelectOption
+  onSelectOption,
+  onClear
 }: {
   value: string;
   onChange: (val: string) => void;
@@ -2326,6 +2337,7 @@ function ComboBox({
   darkMode: boolean;
   className?: string;
   onSelectOption?: (val: string) => void;
+  onClear?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [hasTyped, setHasTyped] = useState(false);
@@ -2354,8 +2366,25 @@ function ComboBox({
         }}
         onBlur={() => setTimeout(() => setOpen(false), 100)}
         placeholder={placeholder}
-        className={baseInput}
+        className={`${baseInput} pr-8`}
       />
+      {value && (
+        <button
+          type="button"
+          onClick={() => {
+            onChange("");
+            setHasTyped(false);
+            onClear?.();
+            inputRef.current?.focus();
+          }}
+          className={`absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 transition ${
+            darkMode ? "text-slate-400 hover:bg-slate-700 hover:text-slate-200" : "text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+          }`}
+          title="清除"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
       {open && filtered.length > 0 ? (
         <div
           className={`absolute z-20 mt-1 max-h-52 w-full overflow-auto rounded-xl border shadow-lg scrollbar-slim ${
