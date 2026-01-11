@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { startTransition, useEffect, useState } from "react";
 import { X } from "lucide-react";
 
 interface ModalProps {
@@ -30,13 +30,15 @@ export function Modal({
   // Handle visibility transitions and initial sync
   useEffect(() => {
     if (isOpen) {
-      setIsVisible(true);
-      setIsClosing(false);
-      setCachedChildren(children);
-      setCachedTitle(title);
+      startTransition(() => {
+        setIsVisible(true);
+        setIsClosing(false);
+        setCachedChildren(children);
+        setCachedTitle(title);
+      });
     } else if (isVisible && !isClosing) {
       // Start closing animation if we are currently visible and not already closing
-      setIsClosing(true);
+      startTransition(() => setIsClosing(true));
     }
   }, [isOpen, isVisible, isClosing, children, title]);
 

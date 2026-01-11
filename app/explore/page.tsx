@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { forwardRef, startTransition, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { Area, AreaChart, CartesianGrid, ComposedChart, ReferenceLine, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis } from "recharts";
 import { formatCompactNumber, formatNumberWithCommas } from "@/lib/utils";
 
@@ -210,7 +210,7 @@ function useLerpYDomain(
   // Sync domain when target changes or animation is disabled
   useEffect(() => {
     if (!targetDomain || !enabled) {
-      setCurrentDomain(targetDomain);
+      startTransition(() => setCurrentDomain(targetDomain));
     }
   }, [targetDomain, enabled]);
 
