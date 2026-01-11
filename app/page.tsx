@@ -881,9 +881,9 @@ export default function DashboardPage() {
               <Activity className="h-4 w-4" />
               {loadingOverview ? "加载中..." : overview ? "实时数据" : "暂无数据"}
             </div>
-            {lastSyncTime && (
+            {lastSyncTime && mounted && (
               <span className={`text-xs ${darkMode ? "text-slate-500" : "text-slate-500"}`}>
-                上次同步: {mounted ? lastSyncTime.toLocaleTimeString() : "--:--:--"}
+                上次同步: {lastSyncTime.toLocaleTimeString()}
               </span>
             )}
           </div>
