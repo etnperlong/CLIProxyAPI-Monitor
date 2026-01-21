@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { BarChart3, FileText, Activity, LogOut, Github, ExternalLink } from "lucide-react";
+import { BarChart3, FileText, Activity, LogOut, Github, ExternalLink, Table } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
 import { Modal } from "./Modal";
 
 const links = [
   { href: "/", label: "仪表盘", icon: BarChart3 },
   { href: "/explore", label: "数据探索", icon: Activity },
+  { href: "/records", label: "调用记录", icon: Table },
   { href: "/logs", label: "日志", icon: FileText }
 ];
 
