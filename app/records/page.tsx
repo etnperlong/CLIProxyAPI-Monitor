@@ -17,9 +17,6 @@ type UsageRecord = {
   outputTokens: number;
   reasoningTokens: number;
   cachedTokens: number;
-  totalRequests: number;
-  successCount: number;
-  failureCount: number;
   isError: boolean;
   cost: number;
 };
@@ -676,7 +673,7 @@ export default function RecordsPage() {
                   </td>
                   <td className="px-3 py-3 first:rounded-l-lg last:rounded-r-lg">
                     <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(row.isError)}`}>
-                      {row.isError ? "异常" : "成功"}
+                      {row.isError ? "失败" : "成功"}
                     </span>
                   </td>
                 </tr>

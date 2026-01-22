@@ -22,9 +22,6 @@ export const usageRecords = pgTable(
     outputTokens: integer("output_tokens").notNull(),
     reasoningTokens: integer("reasoning_tokens").default(0).notNull(),
     cachedTokens: integer("cached_tokens").default(0).notNull(),
-    totalRequests: integer("total_requests").notNull(),
-    successCount: integer("success_count").notNull(),
-    failureCount: integer("failure_count").notNull(),
     isError: boolean("is_error").notNull().default(false),
     raw: text("raw").notNull()
   },

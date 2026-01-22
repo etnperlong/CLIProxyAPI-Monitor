@@ -13,9 +13,6 @@ export type UsageRecordRow = {
   outputTokens: number;
   reasoningTokens: number;
   cachedTokens: number;
-  totalRequests: number;
-  successCount: number;
-  failureCount: number;
   isError: boolean;
   cost: number;
 };
@@ -170,9 +167,6 @@ export async function getUsageRecords(input: {
       outputTokens: usageRecords.outputTokens,
       reasoningTokens: usageRecords.reasoningTokens,
       cachedTokens: usageRecords.cachedTokens,
-      totalRequests: usageRecords.totalRequests,
-      successCount: usageRecords.successCount,
-      failureCount: usageRecords.failureCount,
       isError: usageRecords.isError,
       cost: COST_EXPR
     })

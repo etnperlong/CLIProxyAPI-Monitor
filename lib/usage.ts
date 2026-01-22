@@ -31,10 +31,7 @@ const detailSchema = z.object({
 });
 
 const modelSchema = z.object({
-  total_requests: z.number().optional(),
   total_tokens: z.number().optional(),
-  success_count: z.number().optional(),
-  failure_count: z.number().optional(),
   input_tokens: z.number().optional(),
   output_tokens: z.number().optional(),
   cached_tokens: z.number().optional(),
@@ -42,17 +39,11 @@ const modelSchema = z.object({
 });
 
 const apiSchema = z.object({
-  total_requests: z.number().optional(),
   total_tokens: z.number().optional(),
-  success_count: z.number().optional(),
-  failure_count: z.number().optional(),
   models: z.record(z.string(), modelSchema).optional()
 });
 
 const usageSchema = z.object({
-  total_requests: z.number().optional(),
-  success_count: z.number().optional(),
-  failure_count: z.number().optional(),
   total_tokens: z.number().optional(),
   requests_by_day: z.record(z.string(), z.number()).optional(),
   requests_by_hour: z.record(z.string(), z.number()).optional(),
@@ -124,36 +115,12 @@ export function toUsageRecords(payload: UsageResponse, pulledAt: Date = new Date
             outputTokens: tokenSlice.outputTokens,
             reasoningTokens: tokenSlice.reasoningTokens,
             cachedTokens: tokenSlice.cachedTokens,
-            totalRequests: 1,
-            successCount: success ? 1 : 0,
-            failureCount: success ? 0 : 1,
             isError: !success,
             raw: JSON.stringify({ route, model, detail })
           });
         }
         continue;
       }
-
-      const totalRequests = typed.total_requests ?? 0;
-      const failureCount = typed.failure_count ?? 0;
-      const successCount = typed.success_count ?? Math.max(totalRequests - failureCount, 0);
-
-      rows.push({
-        occurredAt: pulledAt,
-        syncedAt: pulledAt,
-        route,
-        model,
-        totalTokens: typed.total_tokens ?? 0,
-        inputTokens: typed.input_tokens ?? 0,
-        outputTokens: typed.output_tokens ?? 0,
-        reasoningTokens: 0,
-        cachedTokens: typed.cached_tokens ?? 0,
-        totalRequests,
-        successCount,
-        failureCount,
-        isError: failureCount > 0,
-        raw: JSON.stringify({ route, model, stats })
-      });
     }
   }
 

@@ -110,14 +110,14 @@ export async function getOverview(
 
   const totalsPromise: Promise<TotalsRow[]> = db
     .select({
-      totalRequests: sql<number>`coalesce(sum(${usageRecords.totalRequests}), 0)`,
+      totalRequests: sql<number>`count(*)`,
       totalTokens: sql<number>`coalesce(sum(${usageRecords.totalTokens}), 0)`,
       inputTokens: sql<number>`coalesce(sum(${usageRecords.inputTokens}), 0)`,
       outputTokens: sql<number>`coalesce(sum(${usageRecords.outputTokens}), 0)`,
       reasoningTokens: sql<number>`coalesce(sum(${usageRecords.reasoningTokens}), 0)`,
       cachedTokens: sql<number>`coalesce(sum(${usageRecords.cachedTokens}), 0)`,
-      successCount: sql<number>`coalesce(sum(${usageRecords.successCount}), 0)`,
-      failureCount: sql<number>`coalesce(sum(${usageRecords.failureCount}), 0)`
+      successCount: sql<number>`coalesce(sum(case when ${usageRecords.isError} then 0 else 1 end), 0)`,
+      failureCount: sql<number>`coalesce(sum(case when ${usageRecords.isError} then 1 else 0 end), 0)`
     })
     .from(usageRecords)
     .where(filterWhere);
@@ -132,7 +132,7 @@ export async function getOverview(
   const byModelPromise: Promise<ModelAggRow[]> = db
     .select({
       model: usageRecords.model,
-      requests: sql<number>`sum(${usageRecords.totalRequests})`,
+      requests: sql<number>`count(*)`,
       tokens: sql<number>`sum(${usageRecords.totalTokens})`,
       inputTokens: sql<number>`sum(${usageRecords.inputTokens})`,
       outputTokens: sql<number>`sum(${usageRecords.outputTokens})`,
@@ -148,7 +148,7 @@ export async function getOverview(
   const byDayPromise: Promise<DayAggRow[]> = db
     .select({
       label: sql<string>`to_char(${dayExpr}, 'YYYY-MM-DD')`,
-      requests: sql<number>`sum(${usageRecords.totalRequests})`,
+      requests: sql<number>`count(*)`,
       tokens: sql<number>`sum(${usageRecords.totalTokens})`
     })
     .from(usageRecords)
@@ -174,7 +174,7 @@ export async function getOverview(
     .select({
       label: sql<string>`to_char(${hourExpr}, 'MM-DD HH24')`,
       hourStart: sql<Date>`(${hourExpr}) at time zone 'Asia/Shanghai'`,
-      requests: sql<number>`sum(${usageRecords.totalRequests})`,
+      requests: sql<number>`count(*)`,
       tokens: sql<number>`sum(${usageRecords.totalTokens})`,
       inputTokens: sql<number>`sum(${usageRecords.inputTokens})`,
       outputTokens: sql<number>`sum(${usageRecords.outputTokens})`,

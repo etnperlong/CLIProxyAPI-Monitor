@@ -1,4 +1,4 @@
-import { sql, and, gte, lte, eq } from "drizzle-orm";
+import { sql, and, gte, lte } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { usageRecords } from "@/lib/db/schema";
@@ -57,7 +57,7 @@ export async function getExplorePoints(daysInput?: number, opts?: { maxPoints?: 
   const since = hasCustomRange ? withDayStart(startDate!) : new Date(Date.now() - days * DAY_MS);
   const until = hasCustomRange ? withDayEnd(endDate!) : undefined;
 
-  const whereParts: SQL[] = [gte(usageRecords.occurredAt, since), eq(usageRecords.totalRequests, 1)];
+  const whereParts: SQL[] = [gte(usageRecords.occurredAt, since)];
   if (until) whereParts.push(lte(usageRecords.occurredAt, until));
   const where = and(...whereParts);
 
