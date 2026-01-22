@@ -1136,9 +1136,9 @@ export default function DashboardPage() {
                 ) : null}
               </div>
               <p className="mt-2 text-sm">
-                <span className="text-emerald-400">✓ {formatCompactNumber(overviewData.successCount)}</span>
+                <span className="text-emerald-400">✓ {overviewData.successCount}</span>
                 <span className={`mx-2 ${darkMode ? "text-slate-500" : "text-slate-400"}`}>|</span>
-                <span className="text-red-400">✗ {formatCompactNumber(overviewData.failureCount)}</span>
+                <span className="text-red-400">✗ {overviewData.failureCount}</span>
               </p>
             </div>
             
