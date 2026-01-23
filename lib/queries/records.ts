@@ -35,18 +35,44 @@ type SortField =
   | "isError";
 type SortOrder = "asc" | "desc";
 
-const COST_EXPR = sql<number>`coalesce((
-  select (
+const COST_EXPR = sql<number>`coalesce(
+  -- 尝试精确匹配
+  (select (
     (greatest(${usageRecords.inputTokens} - ${usageRecords.cachedTokens}, 0)::numeric / 1000000) * mp.input_price_per_1m
     + (${usageRecords.cachedTokens}::numeric / 1000000) * mp.cached_input_price_per_1m
     + ((${usageRecords.outputTokens} + ${usageRecords.reasoningTokens})::numeric / 1000000) * mp.output_price_per_1m
   )
-  from ${sql.raw("model_prices")} mp
-  where ${usageRecords.model} = mp.model
-     or ${usageRecords.model} ILIKE replace(mp.model, '*', '%')
-  order by (${usageRecords.model} = mp.model) desc, length(mp.model) desc
-  limit 1
-), 0)`;
+  from model_prices mp
+  where mp.model = ${usageRecords.model}
+  limit 1),
+  -- 如果精确匹配失败，尝试通配符匹配（按非通配符字符数量降序选择最具体的）
+  (select (
+    (greatest(${usageRecords.inputTokens} - ${usageRecords.cachedTokens}, 0)::numeric / 1000000) * mp.input_price_per_1m
+    + (${usageRecords.cachedTokens}::numeric / 1000000) * mp.cached_input_price_per_1m
+    + ((${usageRecords.outputTokens} + ${usageRecords.reasoningTokens})::numeric / 1000000) * mp.output_price_per_1m
+  )
+  from model_prices mp
+  where mp.model like '%*%'
+    and ${usageRecords.model} ~ (
+      '^' ||
+      regexp_replace(
+        regexp_replace(
+          mp.model,
+          E'([.+?^$()\\[\\]{}|\\\\-])',   -- 先转义正则元字符
+          E'\\\\\\1',
+          'g'
+        ),
+        E'\\*',                          -- 再把字面量 * -> .*
+        '.*',
+        'g'
+      )
+      || '$'
+    )
+  order by length(replace(mp.model, '*', '')) desc, length(mp.model) desc
+  limit 1),
+  -- 如果都没匹配，返回 0
+  0
+)`;
 
 function parseCursor(input: string | null): UsageRecordCursor | null {
   if (!input) return null;
