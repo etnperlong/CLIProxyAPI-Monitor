@@ -523,17 +523,6 @@ export default function DashboardPage() {
   // 同步模型价格
   const syncModelPrices = useCallback(async () => {
     if (syncingPrices) return;
-    
-    // 从 routeOptions 获取第一个 API Key，如果用户手动输入了则优先使用
-    const apiKey = filterRouteInput.trim() || (routeOptions.length > 0 ? routeOptions[0] : "");
-    if (!apiKey) {
-      setPricesSyncStatus("未找到可用的 API Key，请确保系统已加载数据");
-      setPricesSyncData({ error: "未找到可用的 API Key" });
-      setPricesSyncModalOpen(true);
-      if (pricesSyncStatusTimerRef.current) clearTimeout(pricesSyncStatusTimerRef.current);
-      pricesSyncStatusTimerRef.current = window.setTimeout(() => setPricesSyncStatus(null), 5000);
-      return;
-    }
 
     setSyncingPrices(true);
     setPricesSyncStatus(null);
@@ -544,7 +533,7 @@ export default function DashboardPage() {
       const res = await fetch("/api/sync-model-prices", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey })
+        body: JSON.stringify({})
       });
 
       const data = await res.json();
@@ -565,7 +554,7 @@ export default function DashboardPage() {
       if (pricesSyncStatusTimerRef.current) clearTimeout(pricesSyncStatusTimerRef.current);
       pricesSyncStatusTimerRef.current = window.setTimeout(() => setPricesSyncStatus(null), 8000);
     }
-  }, [filterRouteInput, routeOptions, syncingPrices]);
+  }, [syncingPrices]);
 
   // 页面加载时仅在当前会话首次进入时自动同步一次
   useEffect(() => {

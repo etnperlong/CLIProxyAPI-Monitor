@@ -1,9 +1,45 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { config } from "@/lib/config";
 import { db } from "@/lib/db/client";
 import { modelPrices } from "@/lib/db/schema";
 
 export const runtime = "nodejs";
+
+const PASSWORD = process.env.PASSWORD || process.env.CLIPROXY_SECRET_KEY || "";
+const COOKIE_NAME = "dashboard_auth";
+
+function unauthorized() {
+  return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+}
+
+async function hashPassword(value: string) {
+  const data = new TextEncoder().encode(value);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function isAuthorized(request: Request) {
+  // 检查 Bearer token（用于 cron job 等外部调用）
+  const allowed = [config.password, config.cronSecret].filter(Boolean).map((v) => `Bearer ${v}`);
+  if (allowed.length > 0) {
+    const auth = request.headers.get("authorization") || "";
+    if (allowed.includes(auth)) return true;
+  }
+  
+  // 检查用户的 dashboard cookie（用于前端调用）
+  if (PASSWORD) {
+    const cookieStore = await cookies();
+    const authCookie = cookieStore.get(COOKIE_NAME);
+    if (authCookie) {
+      const expectedToken = await hashPassword(PASSWORD);
+      if (authCookie.value === expectedToken) return true;
+    }
+  }
+  
+  return false;
+}
 
 type ModelsDevModel = {
   id: string;
@@ -18,10 +54,15 @@ type ModelsDevResponse = Record<string, ModelsDevProvider>;
 
 export async function POST(request: Request) {
   try {
-    const { apiKey } = await request.json();
+    // 🔒 鉴权检查
+    if (!(await isAuthorized(request))) {
+      return unauthorized();
+    }
 
+    // 使用服务端配置的 API Key，而不是客户端传入
+    const apiKey = config.cliproxy.apiKey;
     if (!apiKey) {
-      return NextResponse.json({ error: "缺少 apiKey 参数" }, { status: 400 });
+      return NextResponse.json({ error: "服务端未配置 CLIPROXY_SECRET_KEY" }, { status: 500 });
     }
 
     const envBaseUrl = process.env.CLIPROXY_API_BASE_URL || "";
