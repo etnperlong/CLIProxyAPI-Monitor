@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { inArray } from "drizzle-orm";
+import { inArray, desc } from "drizzle-orm";
 import { config } from "@/lib/config";
 import { db } from "@/lib/db/client";
-import { modelPrices } from "@/lib/db/schema";
+import { modelPrices, usageRecords } from "@/lib/db/schema";
 
 export const runtime = "nodejs";
 
@@ -83,12 +83,6 @@ export async function POST(request: Request) {
     syncInFlight = true;
     syncStartedAt = now;
 
-    // 使用服务端配置的 API Key，而不是客户端传入
-    const apiKey = config.cliproxy.apiKey;
-    if (!apiKey) {
-      return NextResponse.json({ error: "服务端未配置 CLIPROXY_SECRET_KEY" }, { status: 500 });
-    }
-
     if (!config.cliproxy.baseUrl) {
       return NextResponse.json({ error: "服务端未配置 CLIPROXY_API_BASE_URL" }, { status: 500 });
     }
@@ -96,6 +90,19 @@ export async function POST(request: Request) {
     if (!config.postgresUrl) {
       return NextResponse.json({ error: "服务端未配置 DATABASE_URL" }, { status: 500 });
     }
+
+    // 从数据库获取最新的 route 值作为 API Key
+    const latestRecord = await db
+      .select({ route: usageRecords.route })
+      .from(usageRecords)
+      .orderBy(desc(usageRecords.id))
+      .limit(1);
+    
+    if (!latestRecord.length || !latestRecord[0].route) {
+      return NextResponse.json({ error: "数据库中没有可用的 API Key 记录" }, { status: 500 });
+    }
+    
+    const apiKey = latestRecord[0].route;
 
     // 1. 从 models.dev 获取价格数据
     const modelsDevHeaders: Record<string, string> = { "Accept": "application/json" };
@@ -149,7 +156,9 @@ export async function POST(request: Request) {
     }
 
     // 3. 从 CLIProxyAPI 获取当前模型列表
-    const modelsUrl = `${config.cliproxy.baseUrl}/models`;
+    // 使用 OpenAI 兼容的 /v1/models 端点而非管理 API
+    const baseUrlWithoutManagement = config.cliproxy.baseUrl.replace(/\/v0\/management\/?$/, "");
+    const modelsUrl = `${baseUrlWithoutManagement}/v1/models`;
     const cliproxyRes = await fetch(modelsUrl, {
       headers: { "Authorization": `Bearer ${apiKey}`, "Accept": "application/json" },
       cache: "no-store"

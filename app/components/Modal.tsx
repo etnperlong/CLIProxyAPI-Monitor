@@ -49,7 +49,7 @@ export function Modal({
         setIsClosing(false);
         setCachedChildren(null);
         setCachedTitle(undefined);
-      }, 200); // Match animation duration
+      }, 150); // Match animation duration
       return () => clearTimeout(timer);
     }
   }, [isClosing]);
