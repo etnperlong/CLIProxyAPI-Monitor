@@ -980,21 +980,6 @@ export default function DashboardPage() {
             {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </button>
           <button
-            onClick={syncModelPrices}
-            disabled={syncingPrices}
-            className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
-              syncingPrices
-                ? darkMode
-                  ? "cursor-not-allowed border-slate-700 bg-slate-800 text-slate-500"
-                  : "cursor-not-allowed border-slate-300 bg-slate-200 text-slate-500"
-                : "border-emerald-500/50 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30"
-            }`}
-            title="从 models.dev 获取最新模型价格并更新到 CLIProxyAPI"
-          >
-            <DollarSign className={`h-4 w-4 ${syncingPrices ? "animate-pulse" : ""}`} />
-            {syncingPrices ? "同步中..." : "模型价格"}
-          </button>
-          <button
             onClick={() => doSync(true)}
             disabled={syncing}
             className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
@@ -1828,11 +1813,28 @@ export default function DashboardPage() {
               <h2 className={`text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>模型价格配置</h2>
               <p className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>设置每百万 tokens 单价，费用计算将立即更新</p>
             </div>
-            {status ? (
-              <p className={`text-xs ${status === "已保存" ? "text-emerald-400" : "text-red-400"}`}>
-                {status}
-              </p>
-            ) : null}
+            <div className="flex items-center gap-3">
+              {status ? (
+                <p className={`text-xs ${status === "已保存" ? "text-emerald-400" : "text-red-400"}`}>
+                  {status}
+                </p>
+              ) : null}
+              <button
+                onClick={syncModelPrices}
+                disabled={syncingPrices}
+                className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
+                  syncingPrices
+                    ? darkMode
+                      ? "cursor-not-allowed border-slate-700 bg-slate-800 text-slate-500"
+                      : "cursor-not-allowed border-slate-300 bg-slate-200 text-slate-500"
+                    : "border-emerald-500/50 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30"
+                }`}
+                title="从 models.dev 获取最新模型价格并更新到面板"
+              >
+                <DollarSign className={`h-4 w-4 ${syncingPrices ? "animate-pulse" : ""}`} />
+                {syncingPrices ? "同步中..." : "更新价格"}
+              </button>
+            </div>
           </div>
 
           <div className="mt-6 grid gap-6 lg:grid-cols-5">
