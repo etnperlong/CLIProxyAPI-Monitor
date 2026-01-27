@@ -733,12 +733,30 @@ export default function DashboardPage() {
     return Array.from(allModels).filter(m => !configuredModels.has(m));
   }, [modelOptions, prices, overviewData?.models]);
 
-  // 已配置价格搜索
+  // 已配置价格搜索和宽度计算
   const [priceSearchQuery, setPriceSearchQuery] = useState("");
-  const filteredPrices = useMemo(() => {
-    if (!priceSearchQuery.trim()) return prices;
-    const query = priceSearchQuery.toLowerCase();
-    return prices.filter(p => p.model.toLowerCase().includes(query));
+  const { filteredPrices, badgeWidths } = useMemo(() => {
+    const filtered = priceSearchQuery.trim() 
+      ? prices.filter(p => p.model.toLowerCase().includes(priceSearchQuery.toLowerCase()))
+      : prices;
+    
+    // 计算全局每列的最大宽度
+    if (filtered.length === 0) {
+      return { filteredPrices: filtered, badgeWidths: { input: 90, cached: 90, output: 90 } };
+    }
+    
+    const maxInputLen = Math.max(...filtered.map(p => String(p.inputPricePer1M).length));
+    const maxCachedLen = Math.max(...filtered.map(p => String(p.cachedInputPricePer1M).length));
+    const maxOutputLen = Math.max(...filtered.map(p => String(p.outputPricePer1M).length));
+    
+    return {
+      filteredPrices: filtered,
+      badgeWidths: {
+        input: Math.max(90, 70 + maxInputLen * 8),
+        cached: Math.max(90, 70 + maxCachedLen * 8),
+        output: Math.max(90, 70 + maxOutputLen * 8)
+      }
+    };
   }, [prices, priceSearchQuery]);
 
   const sortedModelsByCost = useMemo(() => {
@@ -1849,7 +1867,7 @@ export default function DashboardPage() {
 
           <div className="mt-6 grid gap-6 lg:grid-cols-5">
           <form onSubmit={handleSubmit} className={`rounded-xl border p-5 lg:col-span-2 ${darkMode ? "border-slate-700 bg-slate-800/50" : "border-slate-200 bg-slate-50"}`}>
-            <div className="grid gap-4">
+            <div className="grid gap-6">
               <label className={`text-sm font-medium ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
                 模型名称
                 <ComboBox
@@ -1907,30 +1925,20 @@ export default function DashboardPage() {
 
           <div className="lg:col-span-3">
             <div className="scrollbar-slim grid max-h-[420px] gap-3 overflow-y-auto pr-1">
-              {filteredPrices.length ? (() => {
-                // 计算全局每列的最大宽度
-                const maxInputLen = Math.max(...filteredPrices.map(p => String(p.inputPricePer1M).length));
-                const maxCachedLen = Math.max(...filteredPrices.map(p => String(p.cachedInputPricePer1M).length));
-                const maxOutputLen = Math.max(...filteredPrices.map(p => String(p.outputPricePer1M).length));
-                
-                const inputWidth = Math.max(90, 70 + maxInputLen * 8);
-                const cachedWidth = Math.max(90, 70 + maxCachedLen * 8);
-                const outputWidth = Math.max(90, 70 + maxOutputLen * 8);
-                
-                return filteredPrices.map((price) => (
+              {filteredPrices.length ? filteredPrices.map((price) => (
                 <div key={price.model} className={`flex items-center justify-between rounded-xl border px-4 py-3 ${darkMode ? "border-slate-700 bg-slate-800/50" : "border-slate-200 bg-slate-50"}`}>
                   <div>
                     <p className={`text-base font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>{price.model}</p>
                     <div className="mt-1 grid grid-cols-3 gap-2 text-xs">
-                      <span className={`inline-flex items-center justify-between rounded-full px-2 py-0.5 ${darkMode ? "bg-rose-500/15 text-rose-200" : "bg-rose-100 text-rose-700"}`} style={{ width: `${inputWidth}px` }}>
+                      <span className={`inline-flex items-center justify-between rounded-full px-2 py-0.5 ${darkMode ? "bg-rose-500/15 text-rose-200" : "bg-rose-100 text-rose-700"}`} style={{ width: `${badgeWidths.input}px` }}>
                         <span>输入</span>
                         <span className="font-semibold tabular-nums">${price.inputPricePer1M}/M</span>
                       </span>
-                      <span className={`inline-flex items-center justify-between rounded-full px-2 py-0.5 ${darkMode ? "bg-amber-500/15 text-amber-200" : "bg-amber-100 text-amber-700"}`} style={{ width: `${cachedWidth}px` }}>
+                      <span className={`inline-flex items-center justify-between rounded-full px-2 py-0.5 ${darkMode ? "bg-amber-500/15 text-amber-200" : "bg-amber-100 text-amber-700"}`} style={{ width: `${badgeWidths.cached}px` }}>
                         <span>缓存</span>
                         <span className="font-semibold tabular-nums">${price.cachedInputPricePer1M}/M</span>
                       </span>
-                      <span className={`inline-flex items-center justify-between rounded-full px-2 py-0.5 ${darkMode ? "bg-emerald-500/15 text-emerald-200" : "bg-emerald-100 text-emerald-700"}`} style={{ width: `${outputWidth}px` }}>
+                      <span className={`inline-flex items-center justify-between rounded-full px-2 py-0.5 ${darkMode ? "bg-emerald-500/15 text-emerald-200" : "bg-emerald-100 text-emerald-700"}`} style={{ width: `${badgeWidths.output}px` }}>
                         <span>输出</span>
                         <span className="font-semibold tabular-nums">${price.outputPricePer1M}/M</span>
                       </span>
@@ -1955,8 +1963,7 @@ export default function DashboardPage() {
                     </button>
                   </div>
                 </div>
-              ));
-              })() : (
+              )) : (
                 <div className={`flex flex-col items-center justify-center rounded-xl border border-dashed py-8 text-center ${darkMode ? "border-slate-700 bg-slate-800/30" : "border-slate-300 bg-slate-50"}`}>
                   <p className="text-base text-slate-400">
                     {priceSearchQuery ? "未找到匹配的模型" : "暂无已配置价格"}
