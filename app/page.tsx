@@ -2698,7 +2698,7 @@ export default function DashboardPage() {
                         <tr key={i} className={`border-b ${darkMode ? "border-slate-700/50" : "border-slate-200"}`}>
                           <td className="py-1.5 px-2 font-mono">{d.model}</td>
                           <td className="py-1.5 px-2">
-                            <span className={`px-1.5 py-0.5 rounded text-xs ${
+                            <span className={`inline-flex items-center justify-center w-6 h-4.5 rounded text-xs ${
                               d.status === "updated" ? "bg-emerald-500/20 text-emerald-400" :
                               d.status === "skipped" ? "bg-yellow-500/20 text-yellow-400" :
                               "bg-red-500/20 text-red-400"
