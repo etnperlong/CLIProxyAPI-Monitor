@@ -22,7 +22,7 @@
     "react-dom": "19.2.3",
     "react-day-picker": "^8.10.1",
     "recharts": "^3.6.0",
-    "zod": "^4.3.5"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
