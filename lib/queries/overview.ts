@@ -85,7 +85,7 @@ function normalizePageSize(value?: number | null) {
 export async function getOverview(
   daysInput?: number,
   opts?: { model?: string | null; route?: string | null; page?: number | null; pageSize?: number | null; start?: string | Date | null; end?: string | Date | null; timezone?: string | null }
-): Promise<{ overview: UsageOverview; empty: boolean; days: number; meta: OverviewMeta; filters: { models: string[]; routes: string[] } }> {
+): Promise<{ overview: UsageOverview; empty: boolean; days: number; meta: OverviewMeta; filters: { models: string[]; routes: string[] }; timezone: string }> {
   const startDate = parseDateInput(opts?.start);
   const endDate = parseDateInput(opts?.end);
   const hasCustomRange = startDate && endDate && endDate >= startDate;
@@ -338,6 +338,7 @@ export async function getOverview(
     empty: totalRequests === 0,
     days,
     meta: { page, pageSize, totalModels, totalPages },
-    filters
+    filters,
+    timezone: tz
   };
 }

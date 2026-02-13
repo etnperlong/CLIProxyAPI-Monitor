@@ -18,7 +18,7 @@ function normalizeTimezone(raw: string | undefined): string {
     return value;
   } catch {
     console.warn(`TIMEZONE env var "${value}" is not a valid IANA timezone. Falling back to Asia/Shanghai.`);
-    return "UTC";
+    return "Asia/Shanghai";
   }
 }
 
