@@ -33,7 +33,6 @@ type PriceForm = {
 };
 
 const hourFormatter = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "Asia/Shanghai",
   month: "2-digit",
   day: "2-digit",
   hour: "2-digit",
