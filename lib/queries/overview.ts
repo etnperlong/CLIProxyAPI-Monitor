@@ -107,8 +107,13 @@ export async function getOverview(
   const filterWhere = filterWhereParts.length ? and(...filterWhereParts) : undefined;
 
   const tz = opts?.timezone || "Asia/Shanghai";
-  const dayExpr = sql`date_trunc('day', ${usageRecords.occurredAt} at time zone ${tz})`;
-  const hourExpr = sql`date_trunc('hour', ${usageRecords.occurredAt} at time zone ${tz})`;
+  // Use sql.raw() so the timezone is embedded as a SQL literal rather than a query
+  // parameter. PostgreSQL requires the GROUP BY expression to be textually identical
+  // to the SELECT expression; different parameter indices ($1 vs $3) would cause a
+  // "must appear in GROUP BY" error even when the values are equal.
+  const tzLiteral = sql.raw(`'${tz}'`);
+  const dayExpr = sql`date_trunc('day', ${usageRecords.occurredAt} at time zone ${tzLiteral})`;
+  const hourExpr = sql`date_trunc('hour', ${usageRecords.occurredAt} at time zone ${tzLiteral})`;
 
   const totalsPromise: Promise<TotalsRow[]> = db
     .select({
@@ -178,7 +183,7 @@ export async function getOverview(
   const byHourPromise: Promise<HourAggRow[]> = db
     .select({
       label: sql<string>`to_char(${hourExpr}, 'MM-DD HH24')`,
-      hourStart: sql<Date>`(${hourExpr}) at time zone ${tz}`,
+      hourStart: sql<Date>`(${hourExpr}) at time zone ${tzLiteral}`,
       requests: sql<number>`count(*)`,
       tokens: sql<number>`sum(${usageRecords.totalTokens})`,
       inputTokens: sql<number>`sum(${usageRecords.inputTokens})`,
