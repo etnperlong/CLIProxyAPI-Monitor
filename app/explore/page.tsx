@@ -572,7 +572,14 @@ export default function ExplorePage() {
   );
   ScatterTooltip.displayName = "ScatterTooltip";
 
-  const points = useMemo(() => data?.points ?? [], [data]);
+  const points = useMemo(() => {
+    const pts = data?.points ?? [];
+    // 总点数超过 3000 时，过滤掉 tokens 为 0 的点，减少噪点渲染
+    if ((data?.total ?? 0) > 3000) {
+      return pts.filter(p => p.tokens !== 0);
+    }
+    return pts;
+  }, [data]);
 
   // brush 选择区域状态
   const brushStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -1637,6 +1644,12 @@ export default function ExplorePage() {
           <div>
             <span className="text-slate-400">渲染点数：</span>
             <span>{formatNumberWithCommas(visiblePoints.length)}</span>
+            {(data?.total ?? 0) > 3000 && (() => {
+              const filtered = (data?.returned ?? 0) - points.length;
+              return filtered > 0 ? (
+                <span className="ml-1 text-slate-500">（已过滤 {formatNumberWithCommas(filtered)} 无效点）</span>
+              ) : null;
+            })()}
           </div>
           {zoomDomain && dataBounds && (() => {
             const totalXRange = dataBounds.x[1] - dataBounds.x[0];
