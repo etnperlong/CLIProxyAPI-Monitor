@@ -650,22 +650,19 @@ export default function ExplorePage() {
   const [highlightedModel, setHighlightedModel] = useState<string | null>(null);
   const [hiddenModels, setHiddenModels] = useState<Set<string>>(new Set());
 
-  // 数据或筛选条件变化时重置提示文字可见性
+  // 统计行高度超过单行阈值时隐藏提示文字，隐藏后直到刷新页面才再显示
   useEffect(() => {
-    setShowHint(true);
-  }, [data?.total, data?.returned, zoomDomain, appliedRoute, appliedName, filterInvalidPoints]);
-
-  // 统计行高度超过单行阈值时隐藏提示文字
-  useEffect(() => {
-    if (!showHint) return;
     const el = statsRowRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
-      if (el.offsetHeight > 44) setShowHint(false);
+      if (el.offsetHeight > 44) {
+        setShowHint(false);
+        ro.disconnect();
+      }
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [showHint]);
+  }, []);
 
   // 过滤后的点（排除隐藏的模型）
   const filteredPoints = useMemo(() => {
