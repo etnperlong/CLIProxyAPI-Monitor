@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef, startTransition, type FormEvent } from "react";
 import { ResponsiveContainer, LineChart, Line, Area, CartesianGrid, XAxis, YAxis, Tooltip, BarChart, Bar, Legend, ComposedChart, PieChart, Pie, Cell } from "recharts";
 import { formatCurrency, formatNumber, formatCompactNumber, formatNumberWithCommas, formatHourLabel } from "@/lib/utils";
-import { AlertTriangle, Info, LucideIcon, Activity, Save, RefreshCw, Moon, Sun, Pencil, Trash2, Maximize2, CalendarRange, X, DollarSign, Search } from "lucide-react";
+import { AlertTriangle, Info, LucideIcon, Activity, Save, RefreshCw, Moon, Sun, Pencil, Trash2, Maximize2, CalendarRange, X, DollarSign, Search, ChevronDown } from "lucide-react";
 import type { ModelPrice, UsageOverview, UsageSeriesPoint } from "@/lib/types";
 import { Modal } from "@/app/components/Modal";
 
@@ -228,6 +228,18 @@ export default function DashboardPage() {
     details?: { model: string; status: string; reason?: string; matchedWith?: string }[];
     error?: string;
   } | null>(null);
+
+  // 自动刷新状态
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [refreshPreset, setRefreshPreset] = useState("60"); // "60"|"300"|"900"|"1800"|"3600"|"custom"
+  const [customIntervalInput, setCustomIntervalInput] = useState("60");
+  const [customIntervalUnit, setCustomIntervalUnit] = useState<"s" | "m">("s");
+  const autoRefreshWorkerRef = useRef<Worker | null>(null);
+  const tickBaseTimeRef = useRef(0);
+  const tickIntervalMsRef = useRef(60000);
+  const [showCountdownTip, setShowCountdownTip] = useState(false);
+  const [countdownText, setCountdownText] = useState("");
+  const hoverCountdownTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -677,6 +689,64 @@ export default function DashboardPage() {
     applyTheme(initial);
   }, [applyTheme]);
 
+  // 恢复自动刷新设置
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = window.localStorage.getItem("autoRefreshSettings");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.preset) setRefreshPreset(parsed.preset);
+        if (parsed.custom) setCustomIntervalInput(parsed.custom);
+        if (parsed.unit === "m") setCustomIntervalUnit("m");
+      } catch {}
+    }
+  }, []);
+
+  // 保存自动刷新设置（不保存 autoRefresh 开关状态，避免意外刷新）
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("autoRefreshSettings", JSON.stringify({
+      preset: refreshPreset,
+      custom: customIntervalInput,
+      unit: customIntervalUnit,
+    }));
+  }, [refreshPreset, customIntervalInput, customIntervalUnit]);
+
+  // 自动刷新 Worker - 组件挂载时预加载，避免点击时新建 Worker 卡顿
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof Worker === "undefined") return;
+    const worker = new Worker("/auto-refresh-worker.js");
+    autoRefreshWorkerRef.current = worker;
+    worker.onmessage = (e: MessageEvent) => {
+      if (e.data.type === "tick") {
+        tickBaseTimeRef.current = Date.now();
+        doSync(true);
+      }
+    };
+    return () => {
+      worker.postMessage({ type: "stop" });
+      worker.terminate();
+      autoRefreshWorkerRef.current = null;
+    };
+  }, [doSync]);
+
+  // 根据 autoRefresh 开关和间隔设置向 Worker 发送 start/stop
+  useEffect(() => {
+    const worker = autoRefreshWorkerRef.current;
+    if (!worker) return;
+    if (autoRefresh) {
+      const intervalMs = refreshPreset === "custom"
+        ? Math.max(customIntervalUnit === "m" ? 1 : 5, Number(customIntervalInput) || (customIntervalUnit === "m" ? 1 : 60)) * (customIntervalUnit === "m" ? 60_000 : 1000)
+        : Number(refreshPreset) * 1000;
+      tickIntervalMsRef.current = intervalMs;
+      tickBaseTimeRef.current = Date.now();
+      worker.postMessage({ type: "start", interval: intervalMs });
+    } else {
+      worker.postMessage({ type: "stop" });
+    }
+  }, [autoRefresh, refreshPreset, customIntervalInput, customIntervalUnit]);
+
   useEffect(() => {
     if (!customPickerOpen) return;
     const handleClickOutside = (event: MouseEvent) => {
@@ -1067,6 +1137,132 @@ export default function DashboardPage() {
           >
             {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </button>
+          {/* 自动刷新控件 - 扁平一体化 */}
+          <div className="relative">
+            <span className={`pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded px-2 py-0.5 text-xs z-50 transition-opacity duration-150 ${
+              darkMode ? "bg-slate-700 text-emerald-200" : "bg-slate-800 text-emerald-100"
+            } ${showCountdownTip ? "opacity-100" : "opacity-0"}`}>
+              下次刷新: {countdownText}
+            </span>
+          <div className={`flex items-center rounded-lg border text-sm font-medium overflow-hidden transition-colors duration-200 ${
+            autoRefresh
+              ? darkMode
+                ? "border-emerald-500/40 bg-emerald-600/15"
+                : "border-emerald-400/60 bg-emerald-50"
+              : darkMode
+                ? "border-slate-700 bg-slate-800 hover:border-slate-500"
+                : "border-slate-300 bg-white hover:border-slate-400"
+          }`}>
+            <button
+              type="button"
+              onClick={() => setAutoRefresh((v) => !v)}
+              onMouseEnter={() => {
+                if (!autoRefresh) return;
+                const update = () => {
+                  const elapsed = Date.now() - tickBaseTimeRef.current;
+                  const remaining = Math.max(0, tickIntervalMsRef.current - elapsed);
+                  const secs = Math.ceil(remaining / 1000);
+                  setCountdownText(secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`);
+                };
+                update();
+                setShowCountdownTip(true);
+                hoverCountdownTimerRef.current = window.setInterval(update, 500);
+              }}
+              onMouseLeave={() => {
+                setShowCountdownTip(false);
+                if (hoverCountdownTimerRef.current !== null) {
+                  clearInterval(hoverCountdownTimerRef.current);
+                  hoverCountdownTimerRef.current = null;
+                }
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+                autoRefresh
+                  ? darkMode ? "text-emerald-400" : "text-emerald-600"
+                  : darkMode ? "text-slate-300" : "text-slate-700"
+              }`}
+            >
+              <span className={`inline-block h-2 w-2 rounded-full border-2 flex-shrink-0 transition-all duration-200 ${
+                autoRefresh
+                  ? "border-emerald-400 bg-emerald-400"
+                  : darkMode ? "border-slate-500" : "border-slate-400"
+              }`} />
+              自动刷新
+            </button>
+            {/* 频率选择器 - 仅淡入淡出 */}
+            <div className={`flex items-center overflow-hidden transition-opacity duration-200 ${
+              autoRefresh ? "opacity-100" : "opacity-0 pointer-events-none max-w-0"
+            }`}>
+              <div className={`w-px self-stretch my-1 flex-shrink-0 ${
+                darkMode ? "bg-emerald-500/30" : "bg-emerald-300/60"
+              }`} />
+              <div className={`relative flex items-center flex-shrink-0 overflow-hidden ${
+                refreshPreset === "custom" ? "max-w-6" : "max-w-44"
+              }`}>
+                <select
+                  value={refreshPreset}
+                  onChange={(e) => setRefreshPreset(e.target.value)}
+                  className={`appearance-none py-1.5 pl-2 text-xs outline-none cursor-pointer ${
+                    refreshPreset === "custom" ? "pr-4" : "pr-6"
+                  } ${
+                    darkMode ? "text-emerald-300" : "text-emerald-700"
+                  }`}
+                  style={{
+                    backgroundColor: "transparent",
+                    color: refreshPreset === "custom" ? "transparent" : undefined,
+                  }}
+                >
+                  <option value="60" style={{ backgroundColor: darkMode ? "#022c22" : "#fff", color: darkMode ? "#d1fae5" : "#064e3b" }}>1 分钟</option>
+                  <option value="300" style={{ backgroundColor: darkMode ? "#022c22" : "#fff", color: darkMode ? "#d1fae5" : "#064e3b" }}>5 分钟</option>
+                  <option value="900" style={{ backgroundColor: darkMode ? "#022c22" : "#fff", color: darkMode ? "#d1fae5" : "#064e3b" }}>15 分钟</option>
+                  <option value="1800" style={{ backgroundColor: darkMode ? "#022c22" : "#fff", color: darkMode ? "#d1fae5" : "#064e3b" }}>30 分钟</option>
+                  <option value="3600" style={{ backgroundColor: darkMode ? "#022c22" : "#fff", color: darkMode ? "#d1fae5" : "#064e3b" }}>60 分钟</option>
+                  <option value="custom" style={{ backgroundColor: darkMode ? "#022c22" : "#fff", color: darkMode ? "#d1fae5" : "#064e3b" }}>自定义...</option>
+                </select>
+                <ChevronDown className={`absolute right-1 h-3 w-3 pointer-events-none ${
+                  darkMode ? "text-emerald-400" : "text-emerald-600"
+                }`} />
+              </div>
+              {/* 自定义输入 - 仅淡入淡出 */}
+              <div className={`flex items-center overflow-hidden transition-opacity duration-200 ${
+                refreshPreset === "custom" ? "opacity-100" : "opacity-0 pointer-events-none max-w-0"
+              }`}>
+                <div className={`w-px self-stretch my-1 flex-shrink-0 ${
+                  darkMode ? "bg-emerald-500/30" : "bg-emerald-300/60"
+                }`} />
+                <input
+                  type="number"
+                  min={customIntervalUnit === "m" ? "1" : "5"}
+                  value={customIntervalInput}
+                  onChange={(e) => setCustomIntervalInput(e.target.value)}
+                  className={`w-14 py-1.5 pl-2 pr-1 text-xs outline-none flex-shrink-0 appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none ${
+                    darkMode ? "text-emerald-300" : "text-emerald-700"
+                  }`}
+                  style={{ backgroundColor: "transparent" }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (customIntervalUnit === "s") {
+                      const mins = Math.max(1, Math.floor((Number(customIntervalInput) || 60) / 60));
+                      setCustomIntervalInput(String(mins));
+                      setCustomIntervalUnit("m");
+                    } else {
+                      const secs = Math.min(3600, (Number(customIntervalInput) || 1) * 60);
+                      setCustomIntervalInput(String(secs));
+                      setCustomIntervalUnit("s");
+                    }
+                  }}
+                  className={`pr-2 text-xs flex-shrink-0 cursor-pointer transition-colors ${
+                    darkMode ? "text-emerald-400 hover:text-emerald-300" : "text-emerald-600 hover:text-emerald-700"
+                  }`}
+                  title="点击切换秒/分"
+                >
+                  {customIntervalUnit === "s" ? "秒" : "分"}
+                </button>
+              </div>
+            </div>
+          </div>
+          </div>
           <button
             onClick={() => doSync(true)}
             disabled={syncing}
@@ -1935,7 +2131,7 @@ export default function DashboardPage() {
                 <Search className={`absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 ${darkMode ? "text-slate-500" : "text-slate-400"}`} />
                 <input
                   type="text"
-                  placeholder="搜索已配置的模型..."
+                  placeholder="搜索已配置价格的模型..."
                   value={priceSearchQuery}
                   onChange={(e) => setPriceSearchQuery(e.target.value)}
                   className={`w-full rounded-lg border py-2 pl-10 pr-3 text-sm focus:border-indigo-500 focus:outline-none ${darkMode ? "border-slate-700 bg-slate-900 text-white placeholder-slate-500" : "border-slate-300 bg-white text-slate-900 placeholder-slate-400"}`}
