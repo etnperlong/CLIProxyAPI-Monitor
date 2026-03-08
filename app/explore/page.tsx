@@ -311,6 +311,14 @@ const LEGEND_SORT_LABELS: Record<LegendSort, string> = {
   tokens: "Token用量",
   requests: "请求次数",
 };
+const LEGEND_SORT_STORAGE_KEY = "exploreLegendSort";
+
+function parseLegendSort(raw: string | null): LegendSort {
+  if (raw === "tokens" || raw === "requests" || raw === "alpha") {
+    return raw;
+  }
+  return "alpha";
+}
 
 type ModelLegendProps = {
   models: string[];
@@ -333,7 +341,15 @@ const ModelLegend = memo(function ModelLegend({
   onCtrlClick,
   modelStats,
 }: ModelLegendProps) {
-  const [legendSort, setLegendSort] = useState<LegendSort>("alpha");
+  const [legendSort, setLegendSort] = useState<LegendSort>(() => {
+    if (typeof window === "undefined") return "alpha";
+    return parseLegendSort(window.localStorage.getItem(LEGEND_SORT_STORAGE_KEY));
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(LEGEND_SORT_STORAGE_KEY, legendSort);
+  }, [legendSort]);
 
   const sortedModels = useMemo(() => {
     if (legendSort === "tokens")
