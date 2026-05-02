@@ -2,6 +2,11 @@
 
 ## 2026-05-02
 
+- 为 `adapter.js` 的 usage 授权补充基础防爆破限制：
+  - `/usage`、`/v0/management/usage` 继续校验 `Authorization: Bearer <CPA_SECRET_KEY>`。
+  - 同一来源 IP 连续鉴权失败达到阈值后会临时锁定，并返回 `429` 与 `Retry-After`，降低口令被爆破的风险。
+  - 新增可调环境变量：`USAGE_AUTH_MAX_ATTEMPTS`、`USAGE_AUTH_LOCKOUT_MS`、`USAGE_AUTH_CLEANUP_MS`。
+
 - 修复 `adapter.js` 连接 CPA 管理端口时可能被 `ioredis` Ready Check 提前断开的兼容性问题：
   - 在 Redis 客户端配置中禁用 `enableReadyCheck`，避免连接建立后自动发送 `INFO` 命令。
   - 兼容仅实现 `AUTH`、`LPOP`、`PING` 等基础命令的极简 Redis 模拟端，减少启动阶段 `Connection is closed` 错误。

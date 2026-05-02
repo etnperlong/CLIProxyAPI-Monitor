@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'crypto';
 import { createServer } from 'http';
 import Redis from 'ioredis';
 
@@ -20,6 +21,14 @@ const CONFIG = {
   },
   // 本适配器监听的端口
   port: parseInt(process.env.ADAPTER_PORT || '36871'),
+  // usage 接口访问令牌：默认沿用 CPA_SECRET_KEY
+  usageApiToken: (process.env.CPA_SECRET_KEY || '').trim(),
+  // usage 接口鉴权失败限制
+  auth: {
+    maxAttempts: parseInt(process.env.USAGE_AUTH_MAX_ATTEMPTS || '10'),
+    lockoutMs: parseInt(process.env.USAGE_AUTH_LOCKOUT_MS || '1800000'),
+    cleanupMs: parseInt(process.env.USAGE_AUTH_CLEANUP_MS || '3600000'),
+  },
   // 轮询间隔 (毫秒)
   pollInterval: parseInt(process.env.POLL_INTERVAL || '15000'),
   // 内存中保留的最大记录数
@@ -43,6 +52,7 @@ const CONFIG = {
 let usageBuffer = [];
 let syncInProgress = false;
 let adapterStarted = false;
+const failedAuthAttempts = new Map();
 
 // 初始化 Redis 客户端
 const redis = new Redis({
@@ -58,6 +68,43 @@ redis.on('error', (error) => {
   if (!adapterStarted) return;
   console.error('[redis] Connection error:', error.message);
 });
+
+function safeEqualText(left, right) {
+  const leftBuffer = Buffer.from(String(left), 'utf8');
+  const rightBuffer = Buffer.from(String(right), 'utf8');
+
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function isUsageAuthorized(req) {
+  const expectedToken = CONFIG.usageApiToken;
+  if (!expectedToken) return true;
+
+  const authorization = req.headers.authorization || '';
+  const prefix = 'Bearer ';
+  if (!authorization.startsWith(prefix)) {
+    return false;
+  }
+
+  const providedToken = authorization.slice(prefix.length).trim();
+  if (!providedToken) {
+    return false;
+  }
+
+  return safeEqualText(providedToken, expectedToken);
+}
+
+function getRequestPath(req) {
+  try {
+    return new URL(req.url || '/', 'http://localhost').pathname;
+  } catch {
+    return req.url || '/';
+  }
+}
 
 function normalizeRecord(record) {
   if (!record || typeof record !== 'object') return null;
@@ -101,6 +148,83 @@ function toPositiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return parsed;
+}
+
+function getAuthConfig() {
+  return {
+    maxAttempts: toPositiveInt(CONFIG.auth.maxAttempts, 10),
+    lockoutMs: toPositiveInt(CONFIG.auth.lockoutMs, 30 * 60 * 1000),
+    cleanupMs: toPositiveInt(CONFIG.auth.cleanupMs, 60 * 60 * 1000),
+  };
+}
+
+function getClientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.trim()) {
+    return forwarded.split(',')[0].trim();
+  }
+
+  if (Array.isArray(forwarded) && forwarded.length > 0) {
+    return String(forwarded[0]).split(',')[0].trim();
+  }
+
+  const realIp = req.headers['x-real-ip'];
+  if (typeof realIp === 'string' && realIp.trim()) {
+    return realIp.trim();
+  }
+
+  return req.socket?.remoteAddress || 'unknown';
+}
+
+function cleanupExpiredAuthFailures(now = Date.now()) {
+  const { cleanupMs } = getAuthConfig();
+
+  for (const [ip, record] of failedAuthAttempts.entries()) {
+    if (record.lockedUntil > 0 && now - record.lockedUntil > cleanupMs) {
+      failedAuthAttempts.delete(ip);
+    }
+  }
+}
+
+function getLockoutState(req) {
+  const now = Date.now();
+  cleanupExpiredAuthFailures(now);
+
+  const ip = getClientIp(req);
+  const record = failedAuthAttempts.get(ip);
+  if (!record || record.lockedUntil <= now) {
+    return { ip, locked: false, remainingMs: 0 };
+  }
+
+  return {
+    ip,
+    locked: true,
+    remainingMs: Math.max(record.lockedUntil - now, 0),
+  };
+}
+
+function clearAuthFailures(ip) {
+  failedAuthAttempts.delete(ip);
+}
+
+function recordAuthFailure(ip) {
+  const now = Date.now();
+  const { maxAttempts, lockoutMs } = getAuthConfig();
+  const existing = failedAuthAttempts.get(ip) || { attempts: 0, lockedUntil: 0 };
+  const attempts = existing.attempts + 1;
+
+  if (attempts >= maxAttempts) {
+    const next = { attempts: 0, lockedUntil: now + lockoutMs };
+    failedAuthAttempts.set(ip, next);
+    return { locked: true, remainingAttempts: 0, retryAfterMs: lockoutMs };
+  }
+
+  failedAuthAttempts.set(ip, { attempts, lockedUntil: 0 });
+  return {
+    locked: false,
+    remainingAttempts: Math.max(maxAttempts - attempts, 0),
+    retryAfterMs: 0,
+  };
 }
 
 function getSyncConfig() {
@@ -272,6 +396,12 @@ async function startAdapter() {
     console.log(`Polling CPA Redis at ${CONFIG.redis.host}:${CONFIG.redis.port}`);
     console.log(`Redis queue key: ${CONFIG.redis.key}`);
     console.log(`Clear buffer on read: ${CONFIG.clearBufferOnRead}`);
+    console.log(`Usage API auth enabled: ${Boolean(CONFIG.usageApiToken)}`);
+    if (CONFIG.usageApiToken) {
+      const authConfig = getAuthConfig();
+      console.log(`Usage API max auth attempts: ${authConfig.maxAttempts}`);
+      console.log(`Usage API lockout ms: ${authConfig.lockoutMs}`);
+    }
 
     const syncUrl = getSyncUrl();
     console.log(`Periodic sync enabled: ${syncConfig.enabled}`);
@@ -350,7 +480,41 @@ function getAggregatedUsage() {
 
 // 创建 HTTP 服务
 const server = createServer((req, res) => {
-  if (req.url === '/usage' || req.url === '/v0/management/usage') {
+  const pathname = getRequestPath(req);
+
+  if (pathname === '/usage' || pathname === '/v0/management/usage') {
+    const lockoutState = getLockoutState(req);
+    if (lockoutState.locked) {
+      const retryAfterSeconds = Math.max(Math.ceil(lockoutState.remainingMs / 1000), 1);
+      res.writeHead(429, {
+        'Content-Type': 'application/json',
+        'Retry-After': String(retryAfterSeconds),
+      });
+      res.end(JSON.stringify({ error: 'Too many unauthorized attempts' }));
+      return;
+    }
+
+    if (!isUsageAuthorized(req)) {
+      const failure = recordAuthFailure(lockoutState.ip);
+      const headers = {
+        'Content-Type': 'application/json',
+        'WWW-Authenticate': 'Bearer realm="cpa-adapter-usage"',
+      };
+
+      if (failure.locked) {
+        headers['Retry-After'] = String(Math.max(Math.ceil(failure.retryAfterMs / 1000), 1));
+      }
+
+      res.writeHead(failure.locked ? 429 : 401, headers);
+      res.end(JSON.stringify({
+        error: failure.locked ? 'Too many unauthorized attempts' : 'Unauthorized',
+        remainingAttempts: failure.locked ? 0 : failure.remainingAttempts,
+      }));
+      return;
+    }
+
+    clearAuthFailures(lockoutState.ip);
+
     const data = getAggregatedUsage();
     
     if (CONFIG.clearBufferOnRead) {

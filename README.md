@@ -93,6 +93,10 @@ pm2 start adapter.js --name cpa-adapter
 | `MAX_BUFFER_SIZE` | 内存缓冲上限 | `50000` |
 | `BATCH_SIZE` | 每次拉取条数 | `500` |
 | `CLEAR_BUFFER_ON_READ` | 读取 `/usage` 后是否清空缓冲 | `false` |
+| `USAGE_AUTH_MAX_ATTEMPTS` | usage 鉴权最大连续失败次数 | `10` |
+| `USAGE_AUTH_LOCKOUT_MS` | usage 鉴权失败后的锁定时长（毫秒） | `1800000` |
+| `USAGE_AUTH_CLEANUP_MS` | 失败记录清理窗口（毫秒） | `3600000` |
+
 
 ### 定时 sync 环境变量
 
